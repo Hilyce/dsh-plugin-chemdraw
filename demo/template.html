@@ -650,26 +650,51 @@
     });
   });
 
-  /* ---- 复制 ---- */
+  /* ---- 复制（file:// 和手机上 clipboard API 常常不可用，退回到选中 + execCommand） ---- */
+  async function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      try { await navigator.clipboard.writeText(text); return true; } catch {}
+    }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      const ok = document.execCommand('copy');
+      ta.remove();
+      if (ok) return true;
+    } catch {}
+    return false;
+  }
+
   document.querySelectorAll('[data-copy]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const text = btn.dataset.copy;
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
-      }
+      const ok = await copyText(text);
       const old = btn.textContent;
-      btn.textContent = '已复制';
       btn.classList.add('done');
-      setTimeout(() => { btn.textContent = old; btn.classList.remove('done'); }, 1600);
+      if (ok) {
+        btn.textContent = '已复制';
+        setTimeout(() => { btn.textContent = old; btn.classList.remove('done'); }, 1600);
+        return;
+      }
+      // 复制不了就替用户选中文字，手机长按即可复制
+      const pre = btn.closest('pre');
+      const node = pre && pre.firstChild;
+      if (node && node.nodeType === 3) {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      btn.textContent = '长按复制';
+      setTimeout(() => { btn.textContent = old; btn.classList.remove('done'); }, 2400);
     });
   });
 

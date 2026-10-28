@@ -17,14 +17,29 @@
 
 页面里所有结构式都是插件自己渲染出来的，不是示意图。
 
+## 怎么发给别人
+
+**只发 `demo/index.html` 这一个文件就够了**（约 186 KB）。它把 7 个结构式和 7 张位图全部
+转成了内联 SVG / `data:` URI，不引用任何外部文件 —— 微信、邮件、U 盘、手机文件管理器
+里直接打开都能正常显示，不需要带 `assets/`，也不需要联网。
+
+不要发 `template.html`：那是**源模板**，里面的 `{{SVG:aspirin}}` 占位符还没替换，
+单独打开会看到大片空白。
+
+手机上两点说明：
+
+- 复制按钮在 `file://` 下拿不到剪贴板权限，会自动退回到「选中文字 + 提示长按复制」；
+- 动画会跟随系统的「减少动态效果」自动关闭，关掉动画后依然能看到完整结构式。
+
 ## 结构
 
 ```
 demo/
-├─ index.html     ← 生成物，直接部署（GitHub Pages 用这个）
+├─ index.html     ← 单文件成品，直接发人 / 部署（GitHub Pages 用这个）
 ├─ template.html  ← 手写模板，结构 / 样式 / 交互都在这里
-├─ build.mjs      ← 把模板 + assets 里的 SVG 内联成一个单文件
-└─ assets/        ← 插件输出的 SVG / PNG 素材
+├─ build.mjs      ← 把模板 + assets 内联成一个无外部依赖的 HTML
+├─ preview.png    ← 首屏截图
+└─ assets/        ← 插件输出的 SVG / PNG 素材（只在构建时用）
 ```
 
 ## 改内容
@@ -36,7 +51,8 @@ node demo/build.mjs
 ```
 
 `{{SVG:aspirin}}` 这类占位符会被换成 `assets/aspirin.svg` 的内联内容，并去掉根元素的
-`width` / `height`（保留 `viewBox`），这样动画和自适应都交给 CSS 控制。
+`width` / `height`（保留 `viewBox`），这样动画和自适应都交给 CSS 控制；<img> 的
+`src="assets/..."` 会转成 `data:` URI。构建脚本最后会检查是否还有外部引用，有就报错。
 
 ## 换素材
 
