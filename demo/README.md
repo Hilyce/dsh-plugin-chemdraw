@@ -4,6 +4,8 @@
 
 **<https://Hilyce.github.io/dsh-plugin-chemdraw/demo/>**
 
+![预览](preview.png)
+
 ## 内容
 
 - 首屏：阿司匹林结构式逐笔画出（SVG 用 `stroke-dashoffset` 描边动画）
