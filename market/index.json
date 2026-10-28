@@ -1,0 +1,78 @@
+{
+  "format": 1,
+  "title": {
+    "en": "ChemDraw Tools",
+    "zh": "化学结构式工具"
+  },
+  "description": {
+    "en": "Third-party DSH bundles for drawing chemical structures from SMILES.",
+    "zh": "第三方 DSH 插件索引：把 SMILES 画成可用于论文与 Word 的结构式。"
+  },
+  "metadata": {
+    "categories": {
+      "chemistry": {
+        "title": {
+          "en": "Chemistry",
+          "zh": "化学"
+        }
+      }
+    },
+    "labels": {
+      "rdkit": {
+        "title": {
+          "en": "RDKit",
+          "zh": "RDKit"
+        }
+      },
+      "offline": {
+        "title": {
+          "en": "Works offline",
+          "zh": "离线可用"
+        }
+      }
+    }
+  },
+  "plugins": [
+    {
+      "name": "dsh-plugin-chemdraw",
+      "title": {
+        "en": "ChemDraw structures",
+        "zh": "结构式 / 反应式渲染"
+      },
+      "description": {
+        "en": "SMILES to skeletal structure images: transparent PNG/SVG, uniform bond length, reaction schemes, batch export. Ships its own RDKit runtime.",
+        "zh": "把 SMILES 渲染成键线式结构图：透明底 PNG/SVG、键长统一、反应式排版、批量导出，自带 RDKit 运行时。"
+      },
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij4KICA8ZyBmaWxsPSJub25lIiBzdHJva2U9IiMyYjdkZTkiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik0xMiA0NiBMMjYgMzggTDQwIDQ2Ii8+CiAgICA8cGF0aCBkPSJNMjYgMzggTDI2IDIyIEw0MCAxNCIvPgogICAgPHBhdGggZD0iTTQwIDQ2IEw0MCAzMCBMNTIgMjMiLz4KICA8L2c+CiAgPGNpcmNsZSBjeD0iMjYiIGN5PSIzOCIgcj0iMy41IiBmaWxsPSIjMmI3ZGU5Ii8+CiAgPGNpcmNsZSBjeD0iNDAiIGN5PSI0NiIgcj0iMy41IiBmaWxsPSIjMmI3ZGU5Ii8+CiAgPGNpcmNsZSBjeD0iNTIiIGN5PSIyMyIgcj0iNCIgZmlsbD0iI2U4NTUyZCIvPgo8L3N2Zz4K",
+      "author": "Hilyce",
+      "homepage": "https://github.com/Hilyce/dsh-plugin-chemdraw#readme",
+      "repository": {
+        "url": "https://github.com/Hilyce/dsh-plugin-chemdraw"
+      },
+      "metadata": {
+        "category": "chemistry",
+        "keywords": [
+          "smiles",
+          "structure",
+          "reaction",
+          "化学",
+          "结构式",
+          "反应式"
+        ],
+        "labels": [
+          "rdkit",
+          "offline"
+        ]
+      },
+      "versions": [
+        {
+          "version": "0.2.1",
+          "publishTimestamp": 1793183722,
+          "source": {
+            "type": "npm"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+# 统一行尾，避免 Windows 上 CRLF 把 diff 弄脏
+* text=auto eol=lf
+
+*.pyc binary
+*.pyd binary
+*.dll binary
+*.pkl binary
+*.gz binary
+*.pbm binary
+*.pil binary
+*.ico binary
+*.png binary

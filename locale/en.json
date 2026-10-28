@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Structure Renderer",
+    "description": "Render SMILES into skeletal structures: transparent background, tight crop, uniform bond length — ready for Word documents and reaction schemes."
+  }
+}

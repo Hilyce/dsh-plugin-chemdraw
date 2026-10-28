@@ -1,0 +1,31 @@
+name: publish
+
+# 打一个 v* tag（或在 Actions 页面手动 Run workflow）就发布到 npm。
+# 需要仓库 Secret：NPM_TOKEN（npm Granular/Automation token，Read and write）。
+# 若在 npmjs.com 上给本仓库配了 Trusted Publisher（OIDC），可以删掉 NODE_AUTH_TOKEN 那行。
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

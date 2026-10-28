@@ -1,0 +1,68 @@
+{
+  "name": "dsh-plugin-chemdraw",
+  "version": "0.2.1",
+  "description": "Draws skeletal chemical structures from SMILES inside DeepSeek Harness: transparent PNG/SVG, uniform bond lengths, reaction schemes, batch export. Bundles an offline RDKit runtime.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "icon": "./icon.svg",
+  "files": [
+    "index.js",
+    "client.js",
+    "worker.py",
+    "render.py",
+    "scheme.py",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
+    "README.md",
+    "LICENSE",
+    "runtime/**"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ]
+    }
+  },
+  "keywords": [
+    "dsh-plugin",
+    "dsh",
+    "deepseek-harness",
+    "chemdraw",
+    "smiles",
+    "chemistry",
+    "rdkit",
+    "structure",
+    "reaction"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hilyce/dsh-plugin-chemdraw.git"
+  },
+  "homepage": "https://github.com/Hilyce/dsh-plugin-chemdraw#readme",
+  "bugs": {
+    "url": "https://github.com/Hilyce/dsh-plugin-chemdraw/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "scripts": {
+    "market:index": "node scripts/make-market-index.mjs",
+    "market:owner": "node scripts/set-owner.mjs"
+  }
+}
