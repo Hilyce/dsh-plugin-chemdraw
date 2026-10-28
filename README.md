@@ -10,6 +10,8 @@
 
 适用 DSH 桌面版；自带 RDKit 运行时，本机不需要装 Python 或化学库。
 
+**在线演示**：<https://Hilyce.github.io/dsh-plugin-chemdraw/demo/> —— 结构式描边动画、面板打字机、反应式排版都能直接看（源码在 `demo/`，改完跑 `node demo/build.mjs` 重新生成）。
+
 ## 安装
 
 **方式一（界面，推荐）**：侧栏「插件」→ **添加插件** → 输入包名 `dsh-plugin-chemdraw` → 安装 → 立即启用。
