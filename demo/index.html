@@ -8,6 +8,7 @@
 <meta property="og:title" content="dsh-plugin-chemdraw">
 <meta property="og:description" content="把 SMILES 画成能放进论文的结构式：透明底、键长统一、矢量输出，自带离线 RDKit。">
 <meta name="theme-color" content="#0a0c11">
+<script>document.documentElement.classList.add('js')</script>
 <style>
   :root{
     --bg:#0a0c11;
@@ -166,8 +167,9 @@
   /* reaction */
   .reaction-paper{padding:26px 22px}
   .reaction-stage{height:230px}
-  .reveal-x{clip-path:inset(0 100% 0 0);transition:clip-path 1.3s cubic-bezier(.5,0,.2,1)}
-  .reveal-x.in{clip-path:inset(0 0 0 0)}
+  .reveal-x{transition:clip-path 1.3s cubic-bezier(.5,0,.2,1)}
+  .js .reveal-x{clip-path:inset(0 100% 0 0)}
+  .js .reveal-x.in{clip-path:inset(0 0 0 0)}
   .reaction-tools{display:flex;align-items:center;gap:10px;margin-top:14px}
 
   /* features */
@@ -238,8 +240,21 @@
   .foot-links{display:flex;gap:18px}
   .foot-links a:hover{color:var(--text)}
 
-  .reveal{opacity:0;transform:translateY(16px);transition:opacity .7s ease,transform .7s cubic-bezier(.3,0,.2,1)}
-  .reveal.in{opacity:1;transform:none}
+  .reveal{transition:opacity .7s ease,transform .7s cubic-bezier(.3,0,.2,1)}
+  .js .reveal{opacity:0;transform:translateY(16px)}
+  .js .reveal.in{opacity:1;transform:none}
+
+  /* ---------- 结构式描边动画 ----------
+     关键：默认状态就是“画完”的样子（offset 0），动画从 --len 过渡到 0。
+     这样即使 CSS 动画被系统“减少动态”或样式被拦截，图也不会消失。 */
+  @keyframes ink{from{stroke-dashoffset:var(--len,0)}to{stroke-dashoffset:0}}
+  @keyframes pop{from{opacity:0}to{opacity:1}}
+  .mol .ink{
+    stroke-dasharray:var(--len,0);
+    stroke-dashoffset:0;
+    animation:ink var(--dur,900ms) cubic-bezier(.45,.05,.25,1) var(--delay,0ms) both;
+  }
+  .mol .atom-label{animation:pop 420ms ease var(--delay,0ms) both}
 
   @media (max-width:980px){
     .hero{grid-template-columns:1fr;gap:40px;padding-top:56px}
@@ -259,8 +274,9 @@
   }
   @media (prefers-reduced-motion:reduce){
     *{animation:none!important;transition:none!important}
-    .reveal{opacity:1;transform:none}
-    .reveal-x{clip-path:none}
+    .js .reveal{opacity:1;transform:none}
+    .js .reveal-x{clip-path:none}
+    .mol .ink,.mol .atom-label{stroke-dashoffset:0;opacity:1}
   }
 </style>
 </head>
@@ -1814,39 +1830,39 @@ Q 1216.5 1209.4, 1216.5 1211.0
 (() => {
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  /* ---- 结构式“画出来”：键线用 dashoffset 动画，原子标签淡入 ---- */
+  /* ---- 结构式“画出来” ----
+     只加 class 和 CSS 变量，关键帧写在样式表里。
+     元素的默认状态就是“画完”的样子，动画没跑起来最多是“不画”，不会变成空白。 */
   function paint(svg, { delay = 0, duration = 900, stagger = 18 } = {}) {
     if (!svg) return;
-    const bonds = [];
-    const atoms = [];
-    svg.querySelectorAll('path, line, polygon, polyline').forEach((el) => {
+
+    const bonds = [...svg.querySelectorAll('path, line, polygon, polyline')].filter((el) => {
       const style = el.getAttribute('style') || '';
-      if (/fill:\s*none/i.test(style) || el.tagName.toLowerCase() !== 'path') bonds.push(el);
-      else if (/fill:\s*#/i.test(style)) atoms.push(el);
-      else bonds.push(el);
+      return /fill:\s*none/i.test(style) || el.tagName.toLowerCase() !== 'path';
     });
-    const total = bonds.length;
+    const atoms = [...svg.querySelectorAll('path')].filter((el) => {
+      const style = el.getAttribute('style') || '';
+      return !/fill:\s*none/i.test(style) && /fill:\s*#/i.test(style);
+    });
+
     bonds.forEach((el, i) => {
+      el.classList.remove('ink');
       let len = 120;
       try { len = el.getTotalLength(); } catch {}
-      el.style.strokeDasharray = len;
-      el.style.strokeDashoffset = len;
-      el.style.animation = `none`;
+      el.style.setProperty('--len', String(Math.round(len * 10) / 10));
+      el.style.setProperty('--dur', `${duration}ms`);
+      el.style.setProperty('--delay', `${delay + i * stagger}ms`);
       void el.getBoundingClientRect();
-      el.style.animation = `ink ${duration}ms cubic-bezier(.45,0,.25,1) ${delay + i * stagger}ms forwards`;
+      el.classList.add('ink');
     });
-    atoms.forEach((el, i) => {
-      el.style.opacity = 0;
-      el.style.animation = 'none';
-      void el.getBoundingClientRect();
-      el.style.animation = `pop 420ms ease ${delay + duration * .55 + i * 12}ms forwards`;
-    });
-    svg._duration = delay + duration + total * stagger;
-  }
 
-  const style = document.createElement('style');
-  style.textContent = '@keyframes ink{to{stroke-dashoffset:0}}@keyframes pop{to{opacity:1}}';
-  document.head.appendChild(style);
+    atoms.forEach((el, i) => {
+      el.classList.remove('atom-label');
+      el.style.setProperty('--delay', `${Math.round(delay + duration * 0.55 + i * 12)}ms`);
+      void el.getBoundingClientRect();
+      el.classList.add('atom-label');
+    });
+  }
 
   if (!reduce) {
     document.querySelectorAll('.mol').forEach((svg, i) => paint(svg, { delay: 200 + i * 60 }));
@@ -1898,18 +1914,20 @@ Q 1216.5 1209.4, 1216.5 1211.0
   }
   if (typedEl) setTimeout(cycle, 1400);
 
-  /* ---- 滚动进入 ---- */
-  const io = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      entry.target.classList.add('in');
-      if (entry.target.id === 'rxn' && !reduce) {
+  /* ---- 滚动进入（老浏览器 / 无 IO 时直接全部显示，不留白） ---- */
+  const revealables = [...document.querySelectorAll('.reveal, .reveal-x')];
+  if (!('IntersectionObserver' in window)) {
+    revealables.forEach((el) => el.classList.add('in'));
+  } else {
+    const io = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
         entry.target.classList.add('in');
+        io.unobserve(entry.target);
       }
-      io.unobserve(entry.target);
-    }
-  }, { threshold: 0.18 });
-  document.querySelectorAll('.reveal, .reveal-x').forEach((el) => io.observe(el));
+    }, { threshold: 0.18 });
+    revealables.forEach((el) => io.observe(el));
+  }
 
   /* ---- 重播 ---- */
   document.querySelectorAll('[data-replay]').forEach((btn) => {
