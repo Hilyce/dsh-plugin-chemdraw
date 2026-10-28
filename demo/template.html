@@ -165,12 +165,30 @@
   .note p{margin:0;font-size:13.5px;color:var(--muted)}
 
   /* reaction */
-  .reaction-paper{padding:26px 22px}
-  .reaction-stage{height:230px}
+  .reaction-paper{padding:22px}
+  .rxn-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 14px;position:relative;z-index:1}
+  .rxn-label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:rgba(0,0,0,.45)}
+  .rxn-smi{
+    font-family:var(--mono);font-size:12.5px;color:rgba(0,0,0,.82);
+    background:rgba(0,0,0,.05);border:1px solid rgba(0,0,0,.1);border-radius:7px;
+    padding:4px 8px;word-break:break-all;
+  }
+  .reaction-stage{height:200px}
+  .reaction-stage .reveal-x{width:100%;height:100%}
+  .reaction-stage .mol{width:100%;height:100%}
+  /* 注意：被 clip-path 裁掉的元素，IntersectionObserver 的 ratio 会一直是 0，
+     所以观察的是外面这个不裁剪的 .reaction-stage，动画加在里面的 #rxn 上。 */
   .reveal-x{transition:clip-path 1.3s cubic-bezier(.5,0,.2,1)}
   .js .reveal-x{clip-path:inset(0 100% 0 0)}
   .js .reveal-x.in{clip-path:inset(0 0 0 0)}
-  .reaction-tools{display:flex;align-items:center;gap:10px;margin-top:14px}
+  .reaction-tools{display:flex;align-items:center;gap:10px;margin-top:14px;position:relative;z-index:1;flex-wrap:wrap}
+  .reaction-tools .copy{
+    position:static;color:rgba(0,0,0,.62);border-color:rgba(0,0,0,.16);
+    background:rgba(255,255,255,.55);
+  }
+  .reaction-tools .copy:hover{background:rgba(255,255,255,.85);color:rgba(0,0,0,.8)}
+  .reaction-tools .chip,.rxn-head .chip{color:rgba(0,0,0,.55);border-color:rgba(0,0,0,.14);background:rgba(255,255,255,.4)}
+  .rxn-hint{font-size:12px;color:rgba(0,0,0,.42)}
 
   /* features */
   .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
@@ -395,12 +413,19 @@
 
     <div class="split">
       <div class="paper reaction-paper reveal">
-        <div class="reaction-stage reveal-x" id="rxn">
-          {{SVG:esterification}}
+        <div class="rxn-head">
+          <span class="rxn-label">反应式 SMILES</span>
+          <code class="rxn-smi">CC(=O)O.OCC&gt;&gt;CC(=O)OCC.O</code>
+          <span class="chip">H₂SO₄, cat.</span>
+        </div>
+        <div class="reaction-stage">
+          <div class="reveal-x" id="rxn">
+            {{SVG:esterification}}
+          </div>
         </div>
         <div class="reaction-tools">
-          <button class="copy" style="position:static" data-replay="rxn">重播动画</button>
-          <span class="chip">H₂SO₄, cat.</span>
+          <button class="copy" data-replay="rxn">重播</button>
+          <span class="rxn-hint">滚到这里自动播放 · 离开再回来会重播</span>
           <span class="chip" style="margin-left:auto">814 × 174</span>
         </div>
       </div>
@@ -573,7 +598,10 @@
   }
 
   if (!reduce) {
-    document.querySelectorAll('.mol').forEach((svg, i) => paint(svg, { delay: 200 + i * 60 }));
+    document.querySelectorAll('.mol').forEach((svg, i) => {
+      if (svg.closest('#rxn')) return; // 反应式等滚动到位再画，避免还没滑到就播完
+      paint(svg, { delay: 200 + i * 60 });
+    });
   }
 
   /* ---- 打字机循环 ---- */
@@ -623,7 +651,7 @@
   if (typedEl) setTimeout(cycle, 1400);
 
   /* ---- 滚动进入（老浏览器 / 无 IO 时直接全部显示，不留白） ---- */
-  const revealables = [...document.querySelectorAll('.reveal, .reveal-x')];
+  const revealables = [...document.querySelectorAll('.reveal')];
   if (!('IntersectionObserver' in window)) {
     revealables.forEach((el) => el.classList.add('in'));
   } else {
@@ -637,16 +665,60 @@
     revealables.forEach((el) => io.observe(el));
   }
 
-  /* ---- 重播 ---- */
+  /* ---- 反应式：真正滚到 55% 可见才播；离开视野复位，下次进来自动重播 ---- */
+  const rxn = document.getElementById('rxn');
+
+  function playRxn() {
+    if (!rxn) return;
+    rxn.style.transition = '';
+    rxn.classList.add('in');
+    if (!reduce) paint(rxn.querySelector('.mol'), { delay: 80, duration: 1200, stagger: 10 });
+  }
+
+  function resetRxn() {
+    if (!rxn) return;
+    rxn.style.transition = 'none';
+    rxn.classList.remove('in');
+    void rxn.offsetWidth;
+    rxn.style.transition = '';
+  }
+
+  if (rxn) {
+    // 观察未裁剪的外层：clip-path 会让 IO 的可见比例恒为 0，不能直接观察 #rxn
+    const watch = rxn.parentElement || rxn;
+    if (!('IntersectionObserver' in window)) {
+      rxn.classList.add('in');
+    } else {
+      let shown = false;
+      const rxnIO = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          const ready = entry.isIntersecting && entry.intersectionRatio >= 0.55;
+          if (ready && !shown) {
+            shown = true;
+            requestAnimationFrame(playRxn);
+          } else if (!ready && shown && entry.intersectionRatio < 0.15) {
+            shown = false;
+            resetRxn();
+          }
+        }
+      }, { threshold: [0, 0.15, 0.55, 0.8] });
+      rxnIO.observe(watch);
+    }
+  }
+
+  /* ---- 重播按钮 ---- */
   document.querySelectorAll('[data-replay]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const el = document.getElementById(btn.dataset.replay);
       if (!el) return;
+      if (el.id === 'rxn') {
+        resetRxn();
+        requestAnimationFrame(playRxn);
+        return;
+      }
       el.classList.remove('in');
       void el.getBoundingClientRect();
       requestAnimationFrame(() => el.classList.add('in'));
-      const svg = el.querySelector('.mol');
-      if (svg && !reduce) paint(svg, { delay: 60, duration: 1200, stagger: 10 });
     });
   });
 
@@ -697,21 +769,6 @@
       setTimeout(() => { btn.textContent = old; btn.classList.remove('done'); }, 2400);
     });
   });
-
-  /* ---- 首次进入时重播反应式 ---- */
-  const rxn = document.getElementById('rxn');
-  if (rxn) {
-    const rxnIO = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        rxn.classList.remove('in');
-        void rxn.getBoundingClientRect();
-        setTimeout(() => rxn.classList.add('in'), 150);
-        rxnIO.disconnect();
-      }
-    }, { threshold: 0.35 });
-    rxnIO.observe(rxn);
-  }
 })();
 </script>
 </body>
