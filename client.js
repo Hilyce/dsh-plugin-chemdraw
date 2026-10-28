@@ -9,7 +9,9 @@
  * 渲染在 Host 侧完成（RDKit），这里只负责界面与 fetch。
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-chemdraw',
+  // 必须与 package.json 的 name 完全一致：客户端模块按包名登记工厂，
+  // 名字对不上时 immediately 的模块在启动阶段找不到工厂，整页会起不来。
+  id: 'dsh-plugin-chemdraw',
   factory(require) {
     const React = require('react')
     const h = React.createElement
