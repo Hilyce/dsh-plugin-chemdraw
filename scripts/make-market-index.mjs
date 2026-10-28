@@ -24,13 +24,20 @@ const iconSvg = await readFile(join(ROOT, 'icon.svg'), 'utf8')
 const icon = `data:image/svg+xml;base64,${Buffer.from(iconSvg).toString('base64')}`
 
 async function publishedAt(name, version) {
-  const url = `https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`
+  const base = `https://registry.npmjs.org/${encodeURIComponent(name)}`
+  const read = (value) => {
+    const seconds = Math.floor(Date.parse(value || '') / 1000)
+    return Number.isInteger(seconds) && seconds > 0 ? seconds : undefined
+  }
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(8000) })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const body = await response.json()
-    const seconds = Math.floor(Date.parse(body.time || '') / 1000)
-    if (Number.isInteger(seconds) && seconds > 0) return seconds
+    // 完整 packument 的 time[version] 才是该版本的发布时间；
+    // 单版本文档里的 time 往往缺失，不要用。
+    const packument = await (await fetch(base, { signal: AbortSignal.timeout(8000) })).json()
+    const fromPackument = read(packument.time?.[version])
+    if (fromPackument) return fromPackument
+    const doc = await (await fetch(`${base}/${encodeURIComponent(version)}`, { signal: AbortSignal.timeout(8000) })).json()
+    const fromDoc = read(doc.time)
+    if (fromDoc) return fromDoc
   } catch (error) {
     console.warn(`! 读取 npm 发布时间失败（${error.message}），改用当前时间`)
   }
