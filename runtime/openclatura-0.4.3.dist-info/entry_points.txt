@@ -1,0 +1,2 @@
+[console_scripts]
+openclatura = openclatura.cli:main

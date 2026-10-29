@@ -1,0 +1,1489 @@
+# openclatura/chains.py
+
+from dataclasses import dataclass, field
+
+from .canonical_ranks import canonical_ranks
+from .graph_kernel import biconnected_edge_components, normalize_edge
+from .locants import retained_locant_sort_key
+from .molecule import Molecule, edges_within_atoms
+from .polycycle_topology import (
+    adjacency_from_edges,
+    bicyclo_proof,
+    build_ring_numbering,
+    build_von_baeyer_numbering,
+    linear_dispiro_proof,
+    monospiro_proof,
+    ring_system_topology,
+)
+from .ring_parent import RingParent
+from .ring_renderer import is_von_baeyer_descriptor, render_ring_descriptor, render_von_baeyer_descriptor
+from .von_baeyer import find_von_baeyer_candidates
+
+
+@dataclass
+class RingSystem:
+    atoms: set[int]
+    is_bicycle: bool = False
+    is_spiro: bool = False
+    is_polycycle: bool = False
+    x: int = 0
+    y: int = 0
+    z: int = 0
+    paths: list[list[int]] = field(default_factory=list)
+    chord_edges: list[tuple[int, int]] = field(default_factory=list)
+    polycycle_descriptor: str | None = None
+    ring_parent: RingParent | None = None
+
+
+@dataclass(frozen=True)
+class PolycycleDescriptorCandidate:
+    """Descriptor candidates with audited numbering kept next to the text."""
+
+    descriptor: str | None
+    paths: list[list[int]]
+    is_von_baeyer: bool = False
+    numberings: tuple = ()
+
+    @property
+    def descriptor_allowed(self) -> bool:
+        return not self.is_von_baeyer or bool(self.numberings)
+
+
+def _ordered_walk(comp_adj, nodes, start: int) -> list[int]:
+    """Order nodes by walking neighbors from start until the run is exhausted."""
+
+    path = [start]
+    seen = {start}
+    curr = start
+    while len(path) < len(nodes):
+        nxt = next((x for x in comp_adj[curr] if x in nodes and x not in seen), None)
+        if nxt is None:
+            break
+        path.append(nxt)
+        seen.add(nxt)
+        curr = nxt
+    return path
+
+
+def _bridge_interior_path(adj, nodes, start: int, end: int) -> list[int]:
+    """Return the interior nodes of the shortest walk from start to end through nodes."""
+
+    queue = [(start, [])]
+    visited = set()
+    while queue:
+        curr, path = queue.pop(0)
+        if curr == end and path:
+            return path[:-1]
+        visited.add(curr)
+        for neighbor in adj[curr]:
+            if (neighbor in nodes or neighbor == end) and neighbor not in visited:
+                queue.append((neighbor, path + [neighbor]))
+    return []
+
+
+class _CycleWalkExhausted(RuntimeError):
+    """Raised inside the main-ring walk when its bounded budget runs out."""
+
+
+# The walk below enumerates every simple cycle from every atom, which is
+# exponential in the block's cycle rank. Every other search in the naming
+# engine is bounded and this one was not, so a large fused block that fusion
+# nomenclature declines -- a pericondensed nanographene, say -- ran without
+# end instead of abstaining. The widest block in the 5000-molecule corpus
+# spends 332k states, so this leaves a sixfold margin over anything von
+# Baeyer nomenclature is actually asked to describe, and caps the pathological
+# case at a couple of seconds. Exhausting it abstains exactly the way finding
+# no cycle does, and the caller already reads a missing descriptor as a reason
+# to try another strategy.
+_MAIN_RING_WALK_STATES = 2_000_000
+
+
+# Enumerating the cycle space is bounded by 2**rank rather than by the number
+# of cycles, but it is still exponential. Rank 28 is about 2.7e8 iterations of
+# one exclusive-or, which is tens of seconds; past that a caller is better
+# served by an honest abstention than by an unbounded wait.
+_MAX_CYCLE_SPACE_RANK = 28
+_MAX_LONGEST_CYCLES = 4096
+
+
+def _fundamental_cycle_masks(comp_nodes, comp_edges, adj, edge_index):
+    """Return one edge mask per fundamental cycle of a spanning forest.
+
+    Every cycle of a graph is a GF(2) sum of these, so they span exactly the
+    cycles the walk above enumerates one at a time.
+    """
+
+    parent: dict[int, int] = {}
+    depth: dict[int, int] = {}
+    tree: set[tuple[int, int]] = set()
+    seen: set[int] = set()
+    for root in sorted(comp_nodes):
+        if root in seen:
+            continue
+        seen.add(root)
+        depth[root] = 0
+        stack = [root]
+        while stack:
+            current = stack.pop()
+            for neighbor in sorted(adj[current]):
+                if neighbor in seen:
+                    continue
+                seen.add(neighbor)
+                parent[neighbor] = current
+                depth[neighbor] = depth[current] + 1
+                tree.add(normalize_edge(current, neighbor))
+                stack.append(neighbor)
+
+    masks = []
+    for edge in sorted(edge_index):
+        if edge in tree:
+            continue
+        left, right = edge
+        ring = {edge}
+        while left != right:
+            if depth[left] >= depth[right]:
+                ring.add(normalize_edge(left, parent[left]))
+                left = parent[left]
+            else:
+                ring.add(normalize_edge(right, parent[right]))
+                right = parent[right]
+        masks.append(sum(1 << edge_index[member] for member in ring))
+    return masks
+
+
+def _cycle_path_from_edges(mask, edge_by_index):
+    """Order one cycle's edge set into a node path, or None if it is not one cycle."""
+
+    adjacency: dict[int, list[int]] = {}
+    remaining = mask
+    while remaining:
+        lowest = remaining & -remaining
+        left, right = edge_by_index[lowest.bit_length() - 1]
+        remaining ^= lowest
+        adjacency.setdefault(left, []).append(right)
+        adjacency.setdefault(right, []).append(left)
+    if not adjacency or any(len(ends) != 2 for ends in adjacency.values()):
+        return None
+    start = min(adjacency)
+    path = [start]
+    previous = None
+    current = start
+    while True:
+        first, second = adjacency[current]
+        following = first if first != previous else second
+        if following == start:
+            break
+        path.append(following)
+        previous, current = current, following
+        if len(path) > len(adjacency):
+            return None
+    # A disconnected even-degree edge set is two or more cycles, not one.
+    return path if len(path) == len(adjacency) else None
+
+
+def _largest_cycles_from_cycle_space(comp_nodes, comp_edges, adj):
+    """Return every longest simple cycle, found through the cycle space.
+
+    The walk above visits each cycle separately, which costs about twice as
+    much per added ring; a fused block of twenty-one rings needs on the order
+    of 1e9 states. The cycle space has one dimension per ring, so every cycle
+    is reached by exclusive-or over 2**rank subsets of a spanning forest's
+    fundamental cycles -- 2e6 for that same block, and a subset is only
+    inspected when it beats the longest cycle already proved. This is the same
+    answer, not an approximation: the basis spans the whole cycle space, and a
+    subset is kept only when its edges really do form one simple cycle.
+    """
+
+    edges = sorted(normalize_edge(u, v) for u, v in comp_edges)
+    rank = len(edges) - len(comp_nodes) + 1
+    if rank < 1 or rank > _MAX_CYCLE_SPACE_RANK:
+        return []
+    edge_index = {edge: position for position, edge in enumerate(edges)}
+    edge_by_index = {position: edge for edge, position in edge_index.items()}
+    masks = _fundamental_cycle_masks(comp_nodes, comp_edges, adj, edge_index)
+    if not masks:
+        return []
+
+    best_length = 0
+    best_masks: list[int] = []
+    current = 0
+    for step in range(1, 1 << len(masks)):
+        current ^= masks[(step & -step).bit_length() - 1]
+        length = current.bit_count()
+        if length < best_length:
+            continue
+        if length == best_length and (not best_masks or len(best_masks) >= _MAX_LONGEST_CYCLES):
+            continue
+        if _cycle_path_from_edges(current, edge_by_index) is None:
+            continue
+        if length > best_length:
+            best_length = length
+            best_masks = [current]
+        else:
+            best_masks.append(current)
+    paths = [_cycle_path_from_edges(mask, edge_by_index) for mask in best_masks]
+    return sorted((path for path in paths if path is not None), key=lambda path: (len(path), path))
+
+
+def _secondary_bridge_numbering_key(length, first_locant, second_locant):
+    """The order secondary bridge interiors take their locants.
+
+    Longer bridges are numbered first, and equally long ones from the highest
+    bridgehead down. This is not the order they are cited in -- a descriptor
+    names each bridge's bridgeheads outright, so citing them in one order and
+    numbering them in another is consistent, and reading a descriptor back
+    confirms it: the same bridge set numbers its interiors identically however
+    the bracket happens to list it.
+    """
+
+    lower, higher = sorted((first_locant, second_locant))
+    return (-length, -higher, -lower)
+
+
+def _main_ring_division(bridge, position, ring_size):
+    """How unevenly a bridge splits the main ring, or None if it cannot.
+
+    The bridgeheads sit ``span`` apart around the ring, leaving branches of
+    ``span - 1`` and ``ring_size - span - 1`` atoms. The gap between those two
+    is what P-23.2.5.1 asks to make small, and it is zero when the bridge cuts
+    the ring in half.
+    """
+
+    first, second = bridge["endpoints"]
+    if first not in position or second not in position:
+        return None
+    span = abs(position[first] - position[second])
+    span = min(span, ring_size - span)
+    return abs(ring_size - 2 * span)
+
+
+def _main_bridge_order(bridge, position, ring_size):
+    """Rank equally long main-bridge candidates by P-23.2.5.1, then by locant."""
+
+    first, second = bridge["endpoints"]
+    return (
+        _main_ring_division(bridge, position, ring_size),
+        *sorted((position[first], position[second])),
+    )
+
+
+def get_von_baeyer_descriptor_and_path(comp_nodes, comp_edges):
+    """Return the preferred descriptor alone, for callers that cannot audit."""
+
+    return next(iter(get_von_baeyer_descriptor_candidates(comp_nodes, comp_edges)), (None, [list(comp_nodes)]))
+
+
+def get_von_baeyer_descriptor_candidates(comp_nodes, comp_edges):
+    """Yield every (descriptor, numbering) choice, most preferred first.
+
+    Rendering one means building a descriptor and walking a numbering, and a
+    symmetric skeleton offers many equally preferred main rings, so they are
+    rendered as they are asked for. A caller that audits stops at the first
+    that reconstructs, which for almost every molecule is the first it sees.
+    """
+
+    adj = {n: set() for n in comp_nodes}
+    for u, v in comp_edges:
+        adj[u].add(v)
+        adj[v].add(u)
+
+    cycles = []
+    states = 0
+
+    def dfs(curr, start, path, visited):
+        nonlocal states
+        states += 1
+        if states > _MAIN_RING_WALK_STATES:
+            raise _CycleWalkExhausted
+        for n in adj[curr]:
+            if n == start and len(path) >= 3:
+                cycles.append(path)
+            elif n not in visited:
+                dfs(n, start, path + [n], visited | {n})
+
+    try:
+        for n in comp_nodes:
+            dfs(n, n, [n], {n})
+    except _CycleWalkExhausted:
+        # The walk is exponential in the number of cycles; the cycle space is
+        # only as wide as the cycle rank. Fall through to that.
+        largest_cycles = _largest_cycles_from_cycle_space(comp_nodes, comp_edges, adj)
+        if not largest_cycles:
+            return iter([(None, [list(comp_nodes)])])
+    else:
+        if not cycles:
+            return iter([(None, [list(comp_nodes)])])
+        max_len = max(len(c) for c in cycles)
+        largest_cycles = [c for c in cycles if len(c) == max_len]
+
+    candidates: list[tuple[tuple, list[int], list[dict]]] = []
+
+    for main_ring in largest_cycles:
+        main_ring_set = set(main_ring)
+        bridges = []
+        main_ring_edges = set()
+        for i in range(len(main_ring)):
+            u, v = main_ring[i], main_ring[(i + 1) % len(main_ring)]
+            main_ring_edges.add(tuple(sorted((u, v))))
+
+        for u, v in comp_edges:
+            if u in main_ring_set and v in main_ring_set:
+                if tuple(sorted((u, v))) not in main_ring_edges:
+                    bridges.append({"nodes": [], "endpoints": (u, v), "length": 0})
+
+        non_main_nodes = comp_nodes - main_ring_set
+        visited_non_main = set()
+        for n in non_main_nodes:
+            if n not in visited_non_main:
+                comp = []
+                q = [n]
+                visited_non_main.add(n)
+                while q:
+                    curr = q.pop(0)
+                    comp.append(curr)
+                    for neighbor in adj[curr]:
+                        if neighbor in non_main_nodes and neighbor not in visited_non_main:
+                            visited_non_main.add(neighbor)
+                            q.append(neighbor)
+
+                connections = []
+                for cn in sorted(comp):
+                    for neighbor in sorted(adj[cn]):
+                        if neighbor in main_ring_set:
+                            connections.append((cn, neighbor))
+
+                if len(connections) >= 2:
+                    bridges.append(
+                        {"nodes": comp, "endpoints": (connections[0][1], connections[1][1]), "length": len(comp)}
+                    )
+                    for cn, neighbor in connections[2:]:
+                        bridges.append({"nodes": [], "endpoints": (cn, neighbor), "length": 0})
+
+        if not bridges:
+            continue
+
+        # A component returning to the same ring atom is not a bridge between
+        # two bridgeheads. Splitting the main ring there repeats that atom.
+        if any(bridge["endpoints"][0] == bridge["endpoints"][1] for bridge in bridges):
+            continue
+
+        bridges.sort(key=lambda b: b["length"], reverse=True)
+        main_bridge_len = bridges[0]["length"]
+        # P-23.2.5.1: once the main bridge is as large as possible it must
+        # divide the main ring as symmetrically as possible. Length alone
+        # leaves that open whenever two bridges are the same size -- and a
+        # fused block offers many bridges of length zero, so the division was
+        # settled by whichever chord happened to be discovered first.
+        position = {atom: index for index, atom in enumerate(main_ring)}
+        divisible = [
+            bridge
+            for bridge in bridges
+            if bridge["length"] == main_bridge_len and _main_ring_division(bridge, position, len(main_ring)) is not None
+        ]
+        if divisible:
+            main_bridge = min(divisible, key=lambda bridge: _main_bridge_order(bridge, position, len(main_ring)))
+            bridges = [main_bridge, *(bridge for bridge in bridges if bridge is not main_bridge)]
+        division = _main_ring_division(bridges[0], position, len(main_ring))
+        selection_key = (-main_bridge_len, len(main_ring) if division is None else division)
+        candidates.append((selection_key, main_ring, bridges))
+
+    if not candidates:
+        return iter([(None, [largest_cycles[0]])])
+
+    # P-23.2.5.1 ranks these -- largest main bridge, then the most symmetric
+    # division of the main ring -- but a ranking is not a proof that the
+    # descriptor it produces rebuilds the graph. The caller audits each in
+    # turn, so they are all returned in preference order rather than the
+    # first being treated as the only one.
+    candidates.sort(key=lambda candidate: candidate[0])
+    return (
+        rendered
+        for _, main_ring, bridges in candidates
+        for rendered in _von_baeyer_from_candidate(main_ring, bridges, comp_nodes, adj)
+    )
+
+
+def _von_baeyer_from_candidate(main_ring, bridges, comp_nodes, adj):
+    """Render one (main ring, bridge set) choice, both traversals, preferred first."""
+
+    main_bridge = bridges[0]
+
+    ep1, ep2 = main_bridge["endpoints"]
+    idx1 = main_ring.index(ep1)
+    idx2 = main_ring.index(ep2)
+
+    if idx1 < idx2:
+        pathA = main_ring[idx1 : idx2 + 1]
+        pathB = main_ring[idx2:] + main_ring[: idx1 + 1]
+    else:
+        pathA = main_ring[idx2 : idx1 + 1]
+        pathB = main_ring[idx1:] + main_ring[: idx2 + 1]
+
+    lenA = len(pathA) - 2
+    lenB = len(pathB) - 2
+
+    if lenA >= lenB:
+        branch1 = pathA
+        branch2 = pathB[::-1]
+    else:
+        branch1 = pathB
+        branch2 = pathA[::-1]
+
+    if branch1[0] != ep1:
+        branch1 = branch1[::-1]
+        branch2 = branch2[::-1]
+
+    bridge_path = _bridge_interior_path(adj, main_bridge["nodes"], ep1, ep2) if main_bridge["length"] > 0 else []
+
+    path1 = []
+    path1.extend(branch1)
+    path1.extend(branch2[::-1][1:-1])
+    path1.extend(bridge_path)
+
+    path2 = []
+    path2.extend(branch1[::-1])
+    path2.extend(branch2[1:-1])
+    path2.extend(bridge_path[::-1])
+
+    def add_extra_nodes(base_path):
+        path = list(base_path)
+        visited = set(path)
+        # Interiors take their locants longest-bridge-first and, among equals,
+        # from the highest bridgehead down. Appending them in the bridge
+        # list's order instead agreed with that only while no two secondary
+        # bridges were the same length: the list breaks length ties by the
+        # order components were discovered, not by locant, so two equally long
+        # bridges could enter the numbering the wrong way round and the
+        # descriptor would rebuild each one's interior onto the other's
+        # bridgeheads.
+        base_numbering = {node: index + 1 for index, node in enumerate(base_path)}
+        cited = sorted(
+            (bridge for bridge in bridges[1:] if bridge["length"] > 0),
+            key=lambda bridge: _secondary_bridge_numbering_key(
+                bridge["length"],
+                base_numbering.get(bridge["endpoints"][0], 1),
+                base_numbering.get(bridge["endpoints"][1], 1),
+            ),
+        )
+        for br in cited:
+            if br["length"] > 0:
+                b_ep1, b_ep2 = br["endpoints"]
+                found = _bridge_interior_path(adj, br["nodes"], b_ep1, b_ep2)
+                for node in found:
+                    if node not in visited:
+                        path.append(node)
+                        visited.add(node)
+        for n in comp_nodes:
+            if n not in visited:
+                path.append(n)
+                visited.add(n)
+        return path
+
+    path1 = add_extra_nodes(path1)
+    path2 = add_extra_nodes(path2)
+
+    a_len = max(0, len(branch1) - 2)
+    b_len = max(0, len(branch2) - 2)
+    c_len = main_bridge["length"]
+
+    main_lens = sorted([a_len, b_len, c_len], reverse=True)
+    a, b, c = main_lens
+
+    def build_desc(path):
+        pos = {n: i + 1 for i, n in enumerate(path)}
+        extra_chords_data = []
+        for br in bridges[1:]:
+            b_ep1, b_ep2 = br["endpoints"]
+            loc1, loc2 = sorted([pos.get(b_ep1, 1), pos.get(b_ep2, 1)])
+            extra_chords_data.append((br["length"], loc2, loc1))
+        # Cited in the order the interiors are numbered. P-23.2.5.1.1 asks for
+        # increasing bridgehead locants among equal-length bridges instead,
+        # which a descriptor can express -- it names each bridge's bridgeheads
+        # outright -- but audit_von_baeyer_descriptor reads interiors out of
+        # the numbering in cited order, so the two have to agree until it
+        # learns the same highest-bridgehead-first rule.
+        extra_chords_data.sort(key=lambda entry: _secondary_bridge_numbering_key(entry[0], entry[2], entry[1]))
+
+        comp_seq = []
+        extra_chords = []
+        for length, loc2, loc1 in extra_chords_data:
+            comp_seq.extend([loc1, loc2])
+            extra_chords.append(f".{length}^{{{loc1},{loc2}}}")
+
+        desc_str = f"[{a}.{b}.{c}" + "".join(extra_chords) + "]"
+        return desc_str, tuple(comp_seq)
+
+    desc1_str, comp1 = build_desc(path1)
+    desc2_str, comp2 = build_desc(path2)
+
+    # The two orientations traverse the bridges from opposite ends. Their
+    # superscript sequences decide which is preferred, but a bridge interior
+    # numbered from the wrong end still describes a different graph, and the
+    # preferred sequence does not always carry the right one -- discarding the
+    # other left some skeletons with no numbering that reconstructs at all.
+    # Both are offered, preferred first, and the caller's audit settles it.
+    orientations = [(comp1, desc1_str, path1), (comp2, desc2_str, path2)]
+    orientations.sort(key=lambda orientation: orientation[0])
+    return [(render_von_baeyer_descriptor(len(bridges), descriptor), [path]) for _, descriptor, path in orientations]
+
+
+def get_linear_dispiro_descriptor_and_paths(mol: Molecule, comp_nodes, comp_edges):
+    """Return a dispiro descriptor for linear two-spiro-center ring systems.
+
+    The general von Baeyer fallback treats these graphs as bridged polycycles
+    and may duplicate a spiro atom in the numbering path.  Linear dispiro
+    systems have two tetra-valent spiro atoms; removing them leaves two
+    terminal components attached to one spiro atom and one or two middle paths
+    between both spiro atoms.  A direct spiro-spiro bond contributes the zero
+    length middle path in descriptors such as ``dispiro[2.0.2.2]octane``.
+    """
+
+    topology = ring_system_topology(mol, set(comp_nodes), set(comp_edges))
+    proof = linear_dispiro_proof(
+        topology.atoms, topology.edges, degrees=topology.internal_degrees, spiro_atoms=topology.spiro_atoms
+    )
+    if proof is None or topology.classification != "linear_dispiro":
+        return None
+
+    adj = {n: set() for n in comp_nodes}
+    for u, v in comp_edges:
+        adj[u].add(v)
+        adj[v].add(u)
+
+    s1, s2 = proof.spiro_atoms
+    non_spiro = set(comp_nodes) - {s1, s2}
+    components = []
+    seen = set()
+    for node in sorted(non_spiro):
+        if node in seen:
+            continue
+        queue = [node]
+        seen.add(node)
+        comp = set()
+        while queue:
+            current = queue.pop(0)
+            comp.add(current)
+            for neighbor in adj[current]:
+                if neighbor in non_spiro and neighbor not in seen:
+                    seen.add(neighbor)
+                    queue.append(neighbor)
+        attachments = {neighbor for atom in comp for neighbor in adj[atom] if neighbor in {s1, s2}}
+        components.append((comp, attachments))
+
+    terminal = [(comp, next(iter(attachments))) for comp, attachments in components if len(attachments) == 1]
+    middle = [comp for comp, attachments in components if attachments == {s1, s2}]
+    has_direct_middle = s2 in adj[s1]
+    if len(terminal) != 2 or len(middle) + int(has_direct_middle) != 2:
+        return None
+
+    terminal.sort(key=lambda item: _terminal_dispiro_sort_key(mol, item[0]))
+    first_terminal, first_spiro = terminal[0]
+    second_terminal, second_spiro = terminal[1]
+    if first_spiro == second_spiro:
+        return None
+    middle_nonzero = middle[0] if middle else set()
+    extra_middle = middle[1] if len(middle) > 1 else set()
+
+    descriptor_numbers = [
+        len(first_terminal),
+        0 if has_direct_middle else len(middle[0]),
+        len(second_terminal),
+        len(middle_nonzero) if has_direct_middle else len(middle[1]),
+    ]
+    descriptor = render_ring_descriptor("dispiro", tuple(descriptor_numbers))
+
+    first_path = _component_path_between_spiro_neighbors(first_terminal, first_spiro, adj)
+    middle_path = _component_path_between_centers(middle_nonzero, first_spiro, second_spiro, adj)
+    second_path = _component_path_between_spiro_neighbors(second_terminal, second_spiro, adj)
+    extra_middle_path = _component_path_between_centers(extra_middle, first_spiro, second_spiro, adj)
+    paths = []
+    for oriented_first in (first_path, list(reversed(first_path))):
+        for oriented_second in (second_path, list(reversed(second_path))):
+            if has_direct_middle:
+                path = (
+                    list(oriented_first)
+                    + [first_spiro, second_spiro]
+                    + list(oriented_second)
+                    + list(reversed(middle_path))
+                )
+            else:
+                path = (
+                    list(oriented_first)
+                    + [first_spiro]
+                    + list(middle_path)
+                    + [second_spiro]
+                    + list(oriented_second)
+                    + list(reversed(extra_middle_path))
+                )
+            numbering = build_ring_numbering("dispiro", tuple(descriptor_numbers), tuple(path), set(comp_edges), mol)
+            if numbering.audit_ok:
+                paths.append(path)
+    paths = _dedupe_numbering_paths(paths)
+    if not paths:
+        return None
+    return descriptor, paths
+
+
+def _terminal_dispiro_sort_key(mol: Molecule, component: set[int]) -> tuple:
+    """Order the two terminal rings the way P-24.2.4.1.1 numbers them.
+
+    Numbering starts in the smaller terminal ring, at the atom next to its
+    spiro atom, so the smaller component sorts first. This used to sort on
+    the negated size, which began the numbering in the larger ring and moved
+    every locant in the name with it.
+    """
+
+    hetero_positions = [idx for idx in component if mol.atoms[idx].symbol != "C"]
+    return (0 if hetero_positions else 1, len(component), sorted(component))
+
+
+def _component_path_between_spiro_neighbors(
+    component: set[int], spiro_atom: int, adj: dict[int, set[int]]
+) -> list[int]:
+    endpoints = sorted(atom for atom in component if spiro_atom in adj[atom])
+    if len(endpoints) < 2:
+        return sorted(component)
+    return _shortest_component_path(endpoints[0], endpoints[1], component, adj)
+
+
+def _component_path_between_centers(
+    component: set[int], first_spiro: int, second_spiro: int, adj: dict[int, set[int]]
+) -> list[int]:
+    if not component:
+        return []
+    starts = sorted(atom for atom in component if first_spiro in adj[atom])
+    ends = {atom for atom in component if second_spiro in adj[atom]}
+    if not starts or not ends:
+        return sorted(component)
+    for start in starts:
+        for end in sorted(ends):
+            path = _shortest_component_path(start, end, component, adj)
+            if path:
+                return path
+    return sorted(component)
+
+
+def _shortest_component_path(start: int, end: int, component: set[int], adj: dict[int, set[int]]) -> list[int]:
+    queue = [(start, [start])]
+    seen = {start}
+    while queue:
+        current, path = queue.pop(0)
+        if current == end:
+            return path
+        for neighbor in sorted(adj[current]):
+            if neighbor in component and neighbor not in seen:
+                seen.add(neighbor)
+                queue.append((neighbor, path + [neighbor]))
+    return [start]
+
+
+def _cyclic_atoms_within(mol: Molecule, valid_nodes: set[int]) -> set[int]:
+    """Atoms lying on a cycle of the subgraph induced by ``valid_nodes``."""
+
+    cyclic = set()
+    for n in valid_nodes:
+        in_cycle = False
+        for nxt in mol.get_neighbors(n):
+            if nxt not in valid_nodes:
+                continue
+            visited = {n, nxt}
+            q = [nxt]
+            found = False
+            while q:
+                curr = q.pop(0)
+                for nn in mol.get_neighbors(curr):
+                    if nn in valid_nodes:
+                        if nn == n and curr != nxt:
+                            found = True
+                            break
+                        elif nn not in visited:
+                            visited.add(nn)
+                            q.append(nn)
+                if found:
+                    break
+            if found:
+                in_cycle = True
+                break
+        if in_cycle:
+            cyclic.add(n)
+    return cyclic
+
+
+def get_cyclic_atoms(mol: Molecule, exclude_atoms: set[int] = None) -> set[int]:
+    # The full-molecule ring set is computed once and cached; removing atoms can only
+    # break cycles, never create them, so it is always a superset of any excluded result.
+    if mol._cyclic_cache is None:
+        all_nodes = {a.idx for a in mol if a.is_carbon or mol.degree(a.idx) >= 2}
+        mol._cyclic_cache = _cyclic_atoms_within(mol, all_nodes)
+    if not exclude_atoms:
+        return set(mol._cyclic_cache)
+    candidates = mol._cyclic_cache - exclude_atoms
+    if not candidates:
+        return set()
+    return _cyclic_atoms_within(mol, candidates)
+
+
+def find_all_carbon_paths(mol: Molecule, exclude_atoms: set[int] = None) -> list[list[int]]:
+    if exclude_atoms is None:
+        exclude_atoms = set()
+    cyclic_atoms = get_cyclic_atoms(mol, exclude_atoms)
+    # Only map continuous carbon sequences as pure chains to allow S and O to act as substituents
+    valid_nodes = {
+        a.idx for a in mol if a.idx not in exclude_atoms and a.idx not in cyclic_atoms and mol.atoms[a.idx].is_carbon
+    }
+    if not valid_nodes:
+        return []
+
+    all_paths = []
+
+    def collect_paths(start: int) -> None:
+        # Long unbranched backbones can exceed Python's recursion limit. Keep
+        # the existing depth-first order without using the interpreter stack.
+        stack = [(start, [start], {start})]
+        while stack:
+            current, path, visited = stack.pop()
+            neighbors = [n for n in mol.get_neighbors(current) if n in valid_nodes and n not in visited]
+            if not neighbors:
+                all_paths.append(path)
+                continue
+            for neighbor in reversed(neighbors):
+                stack.append((neighbor, path + [neighbor], visited | {neighbor}))
+
+    endpoints = [n for n in valid_nodes if sum(1 for x in mol.get_neighbors(n) if x in valid_nodes) <= 1]
+    start_nodes = endpoints if endpoints else valid_nodes
+
+    for start in start_nodes:
+        collect_paths(start)
+
+    unique_paths = []
+    seen = set()
+    for p in all_paths:
+        p_set = frozenset(p)
+        if not any(p_set.issubset(s) for s in seen):
+            if tuple(p) not in unique_paths and tuple(reversed(p)) not in unique_paths:
+                unique_paths.append(p)
+                seen.add(p_set)
+    return unique_paths
+
+
+def find_ring_systems(mol: Molecule, exclude_atoms: set[int] = None) -> list[RingSystem]:
+    from .rules import retained as retained_rules
+
+    if exclude_atoms is None:
+        exclude_atoms = set()
+    # Every cycle lies entirely within the ring atoms, so searching only those prunes the
+    # exhaustive DFS out of all acyclic branches without losing any cycle.
+    valid_nodes = get_cyclic_atoms(mol, exclude_atoms)
+    if not valid_nodes:
+        return []
+
+    # A complete retained locant graph already proves both the ring-system
+    # boundary and its numbering. Resolve it before enumerating simple cycles;
+    # the number of such cycles grows exponentially in long fused systems.
+    ring_edge_count = (
+        sum(neighbor in valid_nodes for atom_idx in valid_nodes for neighbor in mol.get_neighbors(atom_idx)) // 2
+    )
+    retained_match = (
+        retained_rules.get_pre_descriptor_retained_ring(mol, list(valid_nodes))
+        if ring_edge_count >= len(valid_nodes) + 2
+        else None
+    )
+    retained_maps = retained_match[1] if retained_match is not None else None
+    if retained_maps:
+        retained_parent = RingParent.from_retained_locant_maps(
+            atoms=valid_nodes,
+            locant_maps=retained_maps,
+        )
+        return [
+            RingSystem(
+                atoms=valid_nodes,
+                is_polycycle=True,
+                paths=retained_parent.paths,
+                ring_parent=retained_parent,
+            )
+        ]
+
+    # Ring-system boundaries are graph blocks, not an enumeration of every
+    # simple cycle. Tarjan decomposition is O(V + E), preserves articulation
+    # atoms between spiro components, and hands each fused/bridged block to the
+    # existing proof-based nomenclature engines.
+    ring_edges = edges_within_atoms(mol, valid_nodes)
+    graph_blocks = biconnected_edge_components(valid_nodes, ring_edges)
+    blocks = [
+        _ring_block(graph_block)
+        for graph_block in graph_blocks
+        if len(graph_block) >= len({atom for edge in graph_block for atom in edge})
+    ]
+
+    if not blocks:
+        return []
+
+    changed = True
+    while changed:
+        changed = False
+        new_blocks = []
+        while blocks:
+            b1 = blocks.pop(0)
+            merged = False
+            for i, b2 in enumerate(blocks):
+                shared = b1["nodes"].intersection(b2["nodes"])
+                merged_nodes = b1["nodes"] | b2["nodes"]
+                merged_edges = b1["edges"] | b2["edges"]
+                should_merge = (len(shared) == 1 and b1["is_monocycle"] and b2["is_monocycle"]) or (
+                    shared and _has_multiple_spiro_centers(merged_nodes, merged_edges)
+                )
+                if should_merge:
+                    blocks[i] = {"nodes": merged_nodes, "edges": merged_edges, "is_monocycle": False}
+                    merged = True
+                    changed = True
+                    break
+            if not merged:
+                new_blocks.append(b1)
+        blocks = new_blocks
+
+    systems = []
+    for block in blocks:
+        comp_nodes = block["nodes"]
+        comp_edges = block["edges"]
+
+        comp_adj = {n: set() for n in comp_nodes}
+        for u, v in comp_edges:
+            comp_adj[u].add(v)
+            comp_adj[v].add(u)
+
+        V, E = len(comp_nodes), len(comp_edges)
+
+        if E >= V + 2:
+            # A block-local retained graph remains senior to a generated
+            # fusion name. This second retained lookup matters when the
+            # molecule contains more than one independent ring block.
+            retained_match = retained_rules.get_pre_descriptor_retained_ring(mol, list(comp_nodes))
+            retained_maps = retained_match[1] if retained_match is not None else None
+            if retained_maps:
+                retained_parent = RingParent.from_retained_locant_maps(
+                    atoms=comp_nodes,
+                    locant_maps=retained_maps,
+                )
+                systems.append(
+                    RingSystem(
+                        atoms=comp_nodes,
+                        is_polycycle=True,
+                        paths=retained_parent.paths,
+                        ring_parent=retained_parent,
+                    )
+                )
+                continue
+
+            # Routing a block through its fusion proof is what keeps the von
+            # Baeyer descriptor search off the large fused systems that cannot
+            # afford it. Only a block with a third ring ever reaches that
+            # search: a bicyclic one is proved by
+            # _proven_monospiro_or_bicyclo_system below, which is cheap and
+            # complete, so planning it here bought no routing and cost a full
+            # fusion proof per fused bicycle in the molecule.
+            fusion_paths = _confirmed_fusion_numbering_paths(mol, comp_nodes)
+            if fusion_paths:
+                # The cached planner proof owns the component decomposition,
+                # completed numbering, and reconstruction. Descriptor engines
+                # are only fallbacks after fusion has abstained.
+                systems.append(
+                    RingSystem(
+                        atoms=comp_nodes,
+                        is_polycycle=True,
+                        paths=fusion_paths,
+                    )
+                )
+                continue
+
+        if E == V:
+            path = [min(comp_nodes)]
+            curr = path[0]
+            v_set = {curr}
+            while len(path) < V:
+                next_n = min(n for n in comp_adj[curr] if n not in v_set)
+                path.append(next_n)
+                v_set.add(next_n)
+                curr = next_n
+            systems.append(
+                RingSystem(
+                    atoms=comp_nodes,
+                    paths=[path],
+                    ring_parent=RingParent.from_paths(
+                        kind="monocycle",
+                        atoms=comp_nodes,
+                        descriptor=None,
+                        paths=[path],
+                    ),
+                )
+            )
+
+        elif E == V + 1:
+            proof_system = _proven_monospiro_or_bicyclo_system(mol, comp_nodes, comp_edges)
+            if proof_system is not None:
+                systems.append(proof_system)
+            else:
+                fallback_system = _fallback_monospiro_or_bicyclo_system(mol, comp_nodes, comp_adj)
+                if fallback_system is not None:
+                    systems.append(fallback_system)
+
+        elif E >= V + 2:
+            candidate = _polyspiro_or_von_baeyer_candidate(mol, comp_nodes, comp_edges)
+            descriptor = candidate.descriptor
+            numbered_paths = candidate.paths
+            is_von_baeyer = candidate.is_von_baeyer
+            von_baeyer_numberings = list(candidate.numberings)
+
+            recognized_via_retained = False
+            allow_descriptor = candidate.descriptor_allowed
+            if allow_descriptor and numbered_paths and retained_rules.recognizes_retained_ring(mol, numbered_paths[0]):
+                systems.append(
+                    RingSystem(
+                        atoms=comp_nodes,
+                        is_polycycle=True,
+                        paths=[numbered_paths[0]],
+                        polycycle_descriptor=descriptor,
+                        ring_parent=RingParent.from_paths(
+                            kind="polycycle",
+                            atoms=comp_nodes,
+                            descriptor=descriptor,
+                            paths=[numbered_paths[0]],
+                        )
+                        if not is_von_baeyer
+                        else RingParent.from_numberings(
+                            kind="polycycle",
+                            atoms=comp_nodes,
+                            descriptor=descriptor,
+                            descriptor_numbers=von_baeyer_numberings[0].descriptor_numbers,
+                            numberings=von_baeyer_numberings,
+                            selected_path=numbered_paths[0],
+                        ),
+                    )
+                )
+                recognized_via_retained = True
+            if not recognized_via_retained:
+                if is_von_baeyer and descriptor and von_baeyer_numberings:
+                    paths = _dedupe_numbering_paths([list(numbering.path) for numbering in von_baeyer_numberings])
+                    systems.append(
+                        RingSystem(
+                            atoms=comp_nodes,
+                            is_polycycle=True,
+                            paths=paths,
+                            polycycle_descriptor=descriptor,
+                            ring_parent=RingParent.from_numberings(
+                                kind="polycycle",
+                                atoms=comp_nodes,
+                                descriptor=descriptor,
+                                descriptor_numbers=von_baeyer_numberings[0].descriptor_numbers,
+                                numberings=von_baeyer_numberings,
+                                selected_path=paths[0],
+                            ),
+                        )
+                    )
+                elif descriptor and not is_von_baeyer:
+                    systems.append(
+                        RingSystem(
+                            atoms=comp_nodes,
+                            is_polycycle=True,
+                            paths=numbered_paths,
+                            polycycle_descriptor=descriptor,
+                            ring_parent=RingParent.from_paths(
+                                kind="polycycle",
+                                atoms=comp_nodes,
+                                descriptor=descriptor,
+                                paths=numbered_paths,
+                            ),
+                        )
+                    )
+                else:
+                    fallback_path = numbered_paths[0] if numbered_paths else list(comp_nodes)
+                    systems.append(
+                        RingSystem(
+                            atoms=comp_nodes,
+                            is_polycycle=True,
+                            paths=[fallback_path],
+                            ring_parent=RingParent.from_paths(
+                                kind="polycycle",
+                                atoms=comp_nodes,
+                                descriptor=None,
+                                paths=[fallback_path],
+                            ),
+                        )
+                    )
+
+    return merge_polyspiro_ring_systems(mol, systems)
+
+
+def _confirmed_fusion_numbering_paths(mol: Molecule, atoms: set[int]) -> list[list[int]]:
+    """Return complete paths only when the existing fusion audit confirms them.
+
+    This is a routing optimization, not a second fusion implementation. The
+    planner result is cached on ``Molecule`` and remains the sole source of the
+    component decomposition, completed numbering, and reconstruction proof.
+    """
+
+    from .fusion.context import current_fusion_mode
+    from .fusion.model import FusionConfirmed, FusionMode
+    from .fusion.planner import plan_fusion_parent
+
+    mode = current_fusion_mode()
+    if mode not in {FusionMode.AUDITED_PIN, FusionMode.GENERAL}:
+        return []
+    result = plan_fusion_parent(mol, atoms, mode=mode)
+    if not isinstance(result, FusionConfirmed):
+        return []
+    locant_maps = result.plan.numbering.string_input_locant_maps()
+    return [
+        sorted(locant_map, key=lambda atom: retained_locant_sort_key(str(locant_map[atom])))
+        for locant_map in locant_maps
+    ]
+
+
+def _ring_block(edges: set[tuple[int, int]] | frozenset[tuple[int, int]]) -> dict:
+    nodes = set()
+    for first, second in edges:
+        nodes.add(first)
+        nodes.add(second)
+    edge_set = edges if isinstance(edges, set) else set(edges)
+    return {"nodes": nodes, "edges": edge_set, "is_monocycle": len(edges) == len(nodes)}
+
+
+def merge_polyspiro_ring_systems(mol: Molecule, systems: list[RingSystem]) -> list[RingSystem]:
+    """Merge ring systems that were split around a multi-spiro parent."""
+
+    if len(systems) < 2:
+        return systems
+    result = []
+    seen = set()
+    for idx, system in enumerate(systems):
+        if idx in seen:
+            continue
+        group_indexes = {idx}
+        queue = [idx]
+        seen.add(idx)
+        while queue:
+            current_idx = queue.pop(0)
+            current = systems[current_idx]
+            for other_idx, other in enumerate(systems):
+                if other_idx in seen:
+                    continue
+                if current.atoms.isdisjoint(other.atoms):
+                    continue
+                seen.add(other_idx)
+                group_indexes.add(other_idx)
+                queue.append(other_idx)
+        if len(group_indexes) == 1:
+            result.append(system)
+            continue
+        union_atoms = set()
+        for group_idx in group_indexes:
+            union_atoms |= systems[group_idx].atoms
+        union_edges = edges_within_atoms(mol, union_atoms)
+        if not _has_multiple_spiro_centers(union_atoms, union_edges):
+            result.extend(systems[group_idx] for group_idx in sorted(group_indexes))
+            continue
+        dispiro = get_linear_dispiro_descriptor_and_paths(mol, union_atoms, union_edges)
+        if dispiro is None:
+            result.extend(systems[group_idx] for group_idx in sorted(group_indexes))
+            continue
+        descriptor, paths = dispiro
+        result.append(
+            RingSystem(
+                atoms=union_atoms,
+                is_polycycle=True,
+                paths=paths,
+                polycycle_descriptor=descriptor,
+                ring_parent=RingParent.from_paths(
+                    kind="dispiro",
+                    atoms=union_atoms,
+                    descriptor=descriptor,
+                    paths=paths,
+                ),
+            )
+        )
+    return result
+
+
+def _proven_monospiro_or_bicyclo_system(
+    mol: Molecule, comp_nodes: set[int], comp_edges: set[tuple[int, int]]
+) -> RingSystem | None:
+    from .rules import retained as retained_rules
+
+    topology = ring_system_topology(mol, comp_nodes, comp_edges)
+    spiro = monospiro_proof(
+        topology.atoms, topology.edges, degrees=topology.internal_degrees, spiro_atoms=topology.spiro_atoms
+    )
+    if spiro is not None and topology.classification == "monospiro":
+        numberings = _audited_ring_numberings(
+            mol, "spiro", spiro.descriptor_numbers, spiro.numbering_paths, topology.edges
+        )
+        if not numberings:
+            return None
+        paths = _dedupe_numbering_paths([list(numbering.path) for numbering in numberings])
+        retained = _first_retained_path(mol, paths, retained_rules)
+        selected_paths = [retained] if retained is not None else paths
+        return RingSystem(
+            atoms=set(comp_nodes),
+            is_spiro=True,
+            x=spiro.descriptor_numbers[0],
+            y=spiro.descriptor_numbers[1],
+            paths=selected_paths,
+            ring_parent=RingParent.from_numberings(
+                kind="spiro",
+                atoms=comp_nodes,
+                descriptor=spiro.descriptor,
+                descriptor_numbers=spiro.descriptor_numbers,
+                numberings=numberings,
+                selected_path=selected_paths[0],
+            ),
+        )
+
+    bicyclo = bicyclo_proof(
+        topology.atoms,
+        topology.edges,
+        degrees=topology.internal_degrees,
+        bridgeheads=topology.bridgeheads,
+    )
+    if bicyclo is not None and topology.classification == "bicyclic":
+        numberings = _audited_ring_numberings(
+            mol, "bicyclo", bicyclo.descriptor_numbers, bicyclo.numbering_paths, topology.edges
+        )
+        if not numberings:
+            return None
+        paths = _dedupe_numbering_paths([list(numbering.path) for numbering in numberings])
+        fallback = _fallback_monospiro_or_bicyclo_system(
+            mol,
+            comp_nodes,
+            adjacency_from_edges(comp_nodes, comp_edges),
+        )
+        fallback_paths = []
+        fallback_numberings = []
+        if fallback is not None:
+            fallback_numberings = _audited_ring_numberings(
+                mol,
+                "bicyclo",
+                bicyclo.descriptor_numbers,
+                [tuple(path) for path in fallback.paths],
+                topology.edges,
+            )
+            fallback_paths = _dedupe_numbering_paths([list(numbering.path) for numbering in fallback_numberings])
+        if fallback is not None and not _is_plain_hydrocarbon_ring_system(mol, comp_nodes, comp_edges):
+            paths = fallback_paths or paths
+            numberings = fallback_numberings or numberings
+        elif fallback is not None:
+            paths = _dedupe_numbering_paths(paths + fallback_paths)
+            numberings = _dedupe_ring_numberings(numberings + fallback_numberings)
+        retained = _first_retained_path(mol, paths, retained_rules)
+        selected_paths = [retained] if retained is not None else paths
+        return RingSystem(
+            atoms=set(comp_nodes),
+            is_bicycle=True,
+            x=bicyclo.descriptor_numbers[0],
+            y=bicyclo.descriptor_numbers[1],
+            z=bicyclo.descriptor_numbers[2],
+            paths=selected_paths,
+            ring_parent=RingParent.from_numberings(
+                kind="bicyclo",
+                atoms=comp_nodes,
+                descriptor=bicyclo.descriptor,
+                descriptor_numbers=bicyclo.descriptor_numbers,
+                numberings=numberings,
+                selected_path=selected_paths[0],
+            ),
+        )
+    return None
+
+
+def _audited_ring_numberings(
+    mol: Molecule,
+    kind: str,
+    descriptor_numbers: tuple[int, ...],
+    paths: tuple[tuple[int, ...], ...] | list[tuple[int, ...]],
+    edges: frozenset[tuple[int, int]],
+):
+    audited = []
+    for path in paths:
+        numbering = build_ring_numbering(kind, descriptor_numbers, path, edges, mol)
+        if numbering.audit_ok:
+            audited.append(numbering)
+    return _dedupe_ring_numberings(audited)
+
+
+def _audited_von_baeyer_numberings(
+    mol: Molecule,
+    descriptor: str,
+    paths: list[list[int]] | tuple[tuple[int, ...], ...],
+    edges: frozenset[tuple[int, int]],
+):
+    audited = []
+    for path in paths:
+        numbering = build_von_baeyer_numbering(descriptor, path, edges, mol)
+        if numbering.audit_ok:
+            audited.append(numbering)
+    return _dedupe_ring_numberings(audited)
+
+
+def _dedupe_ring_numberings(numberings):
+    unique = []
+    seen = set()
+    for numbering in numberings:
+        if numbering.path in seen:
+            continue
+        seen.add(numbering.path)
+        unique.append(numbering)
+    return unique
+
+
+def _is_plain_hydrocarbon_ring_system(
+    mol: Molecule, comp_nodes: set[int], comp_edges: set[tuple[int, int]] | frozenset[tuple[int, int]]
+) -> bool:
+    if any(mol.atoms[atom_idx].symbol != "C" or mol.atoms[atom_idx].charge for atom_idx in comp_nodes):
+        return False
+    for first, second in comp_edges:
+        bond = mol.get_bond(first, second)
+        if bond is not None and bond.order != 1:
+            return False
+    return True
+
+
+def _dedupe_numbering_paths(paths: list[list[int]]) -> list[list[int]]:
+    unique = []
+    seen = set()
+    for path in paths:
+        key = tuple(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def _first_retained_path(mol: Molecule, paths: list[list[int]], retained_rules) -> list[int] | None:
+    for path in paths:
+        if retained_rules.recognizes_retained_ring(mol, path):
+            return path
+    return None
+
+
+def _fallback_monospiro_or_bicyclo_system(
+    mol: Molecule,
+    comp_nodes: set[int],
+    comp_adj: dict[int, set[int]],
+) -> RingSystem | None:
+    from .rules import retained as retained_rules
+
+    degrees = {n: len(comp_adj[n]) for n in comp_nodes}
+    deg4 = [n for n, d in degrees.items() if d == 4]
+    deg3 = [n for n, d in degrees.items() if d >= 3]
+
+    if len(deg4) == 1:
+        spiro_atom = deg4[0]
+        sub_nodes = comp_nodes - {spiro_atom}
+        rings = []
+        visited_sub = set()
+        for sn in sub_nodes:
+            if sn in visited_sub:
+                continue
+            comp = []
+            q = [sn]
+            while q:
+                c = q.pop(0)
+                if c not in visited_sub:
+                    visited_sub.add(c)
+                    comp.append(c)
+                    q.extend([x for x in comp_adj[c] if x in sub_nodes and x not in visited_sub])
+
+            endpoints = [n for n in comp if spiro_atom in comp_adj[n]]
+            if len(endpoints) == 2:
+                rings.append(_ordered_walk(comp_adj, comp, endpoints[0]))
+
+        if len(rings) != 2:
+            return None
+        r1, r2 = rings
+        if len(r1) > len(r2):
+            r1, r2 = r2, r1
+        return RingSystem(
+            atoms=comp_nodes,
+            is_spiro=True,
+            x=len(r1),
+            y=len(r2),
+            paths=[
+                r1 + [spiro_atom] + r2,
+                r1 + [spiro_atom] + r2[::-1],
+                r1[::-1] + [spiro_atom] + r2,
+                r1[::-1] + [spiro_atom] + r2[::-1],
+            ],
+        )
+
+    if len(deg3) != 2:
+        return None
+    b1, b2 = deg3
+    paths_between = []
+    if b2 in comp_adj[b1]:
+        paths_between.append([])
+
+    sub_nodes = comp_nodes - {b1, b2}
+    sub_visited = set()
+    for sn in sub_nodes:
+        if sn in sub_visited:
+            continue
+        p_nodes = []
+        q = [sn]
+        while q:
+            c = q.pop(0)
+            if c not in sub_visited:
+                sub_visited.add(c)
+                p_nodes.append(c)
+                q.extend([x for x in comp_adj[c] if x in sub_nodes and x not in sub_visited])
+
+        ends = [n for n in p_nodes if b1 in comp_adj[n]]
+        if not ends:
+            continue
+        ordered_p = _ordered_walk(comp_adj, p_nodes, ends[0])
+
+        if b2 not in comp_adj[ordered_p[-1]]:
+            ordered_p = ordered_p[::-1]
+        paths_between.append(ordered_p)
+
+    paths_between.sort(key=len, reverse=True)
+    if len(paths_between) != 3:
+        return None
+    p1, p2, p3 = paths_between
+    valid_assignments = [(p1, p2, p3)]
+    if len(p1) == len(p2) and len(p2) == len(p3):
+        valid_assignments = [(p1, p2, p3), (p1, p3, p2), (p2, p1, p3), (p2, p3, p1), (p3, p1, p2), (p3, p2, p1)]
+    elif len(p1) == len(p2):
+        valid_assignments = [(p1, p2, p3), (p2, p1, p3)]
+    elif len(p2) == len(p3):
+        valid_assignments = [(p1, p2, p3), (p1, p3, p2)]
+
+    vb_paths = []
+    for a, b, c in valid_assignments:
+        vb_paths.append([b1] + a + [b2] + b[::-1] + c)
+        vb_paths.append([b2] + a[::-1] + [b1] + b + c[::-1])
+
+    for cand in vb_paths:
+        if retained_rules.recognizes_retained_ring(mol, cand):
+            return RingSystem(atoms=comp_nodes, is_bicycle=True, x=len(p1), y=len(p2), z=len(p3), paths=[cand])
+    return RingSystem(atoms=comp_nodes, is_bicycle=True, x=len(p1), y=len(p2), z=len(p3), paths=vb_paths)
+
+
+# A symmetric skeleton can offer a hundred equally preferred main rings, and
+# each has to be rendered before its reconstruction can be audited. This bounds
+# that work; every molecule in the corpora settles far inside it, nearly always
+# on the first candidate.
+_MAX_VON_BAEYER_CANDIDATES = 256
+
+
+def _polyspiro_or_von_baeyer_candidate(
+    mol: Molecule,
+    atoms: set[int],
+    edges: set[tuple[int, int]],
+) -> PolycycleDescriptorCandidate:
+    dispiro = get_linear_dispiro_descriptor_and_paths(mol, atoms, edges)
+    if dispiro is not None:
+        descriptor, paths = dispiro
+        return PolycycleDescriptorCandidate(descriptor=descriptor, paths=paths)
+    # The cycle traversal contains equivalent decomposition ties. Give it
+    # canonical graph identities, then restore the caller's original atom IDs.
+    # Canonical ranks keep the choice from following the input atom order, but
+    # a relabelling can leave a skeleton whose every candidate numbering fails
+    # to rebuild the graph, so the atom order is kept as a second source: a
+    # reconstructable name that owes its numbering to the input order beats no
+    # name at all. Almost every molecule is settled by the first candidate of
+    # the first ordering and never reaches the second.
+    ranks = canonical_ranks(mol)
+    orderings = (sorted(atoms, key=ranks.__getitem__), sorted(atoms))
+    legacy_descriptor = None
+    legacy_paths = [sorted(atoms)]
+    for ordering_index, ordered_atoms in enumerate(orderings):
+        accepted_descriptor = None
+        accepted_numberings: list = []
+        canonical_ids = {atom: position for position, atom in enumerate(ordered_atoms)}
+        canonical_edges = {tuple(sorted((canonical_ids[u], canonical_ids[v]))) for u, v in edges}
+        # Equally preferred main rings are the rule in a symmetric skeleton, and
+        # the preference order ranks them without proving that the descriptor
+        # each one yields rebuilds the graph. Take the first that its own
+        # reconstruction audit accepts rather than letting the leading one speak
+        # for all of them: abandoning the whole parent because the first choice
+        # failed is what left these skeletons unnamed.
+        for index, (descriptor, candidate_paths) in enumerate(
+            get_von_baeyer_descriptor_candidates(set(canonical_ids.values()), canonical_edges)
+        ):
+            if index == 0 and ordering_index == 0:
+                legacy_descriptor = descriptor
+                legacy_paths = [[ordered_atoms[position] for position in path] for path in candidate_paths]
+            if index >= _MAX_VON_BAEYER_CANDIDATES:
+                break
+            if not descriptor or not is_von_baeyer_descriptor(descriptor):
+                continue
+            paths = [[ordered_atoms[position] for position in path] for path in candidate_paths]
+            numberings = tuple(_audited_von_baeyer_numberings(mol, descriptor, paths, frozenset(edges)))
+            if not numberings:
+                continue
+            if accepted_descriptor is None:
+                accepted_descriptor = descriptor
+            if descriptor == accepted_descriptor:
+                accepted_numberings.extend(numberings)
+        if accepted_descriptor is not None:
+            # Every numbering of the accepted descriptor is kept, not just the
+            # first to reconstruct. They differ in where the numbering starts
+            # and which way it runs, and the heteroatom, hydro and substituent
+            # criteria downstream choose between them; handing over only one
+            # settles by reconstruction order what those rules should settle.
+            numberings = _dedupe_ring_numberings(accepted_numberings)
+            return PolycycleDescriptorCandidate(
+                descriptor=accepted_descriptor,
+                paths=_dedupe_numbering_paths([list(numbering.path) for numbering in numberings]),
+                is_von_baeyer=True,
+                numberings=tuple(numberings),
+            )
+    # Spiro side-component discovery temporarily marks the shared atom as Si so
+    # the locant can be recovered from the generated side name.  That marker is
+    # not a real replacement heteroatom and must not participate in the new
+    # von Baeyer numbering tie-breakers.
+    if any(mol.atoms[atom].symbol == "Si" for atom in atoms):
+        descriptor, paths = legacy_descriptor, legacy_paths
+        if not descriptor or not is_von_baeyer_descriptor(descriptor):
+            return PolycycleDescriptorCandidate(descriptor=descriptor, paths=paths)
+        numberings = tuple(_audited_von_baeyer_numberings(mol, descriptor, paths, frozenset(edges)))
+        return PolycycleDescriptorCandidate(
+            descriptor=descriptor,
+            paths=_dedupe_numbering_paths([list(numbering.path) for numbering in numberings]),
+            is_von_baeyer=True,
+            numberings=numberings,
+        )
+    audited_candidates = find_von_baeyer_candidates(mol, atoms, edges)
+    if audited_candidates:
+        descriptor = audited_candidates[0].descriptor
+        same_descriptor = tuple(candidate for candidate in audited_candidates if candidate.descriptor == descriptor)
+        numberings = []
+        if legacy_descriptor == descriptor:
+            numberings.extend(_audited_von_baeyer_numberings(mol, descriptor, legacy_paths, frozenset(edges)))
+        numberings.extend(candidate.numbering for candidate in same_descriptor)
+        numberings = _dedupe_ring_numberings(numberings)
+        return PolycycleDescriptorCandidate(
+            descriptor=descriptor,
+            paths=_dedupe_numbering_paths([list(numbering.path) for numbering in numberings]),
+            is_von_baeyer=True,
+            numberings=tuple(numberings),
+        )
+    descriptor, paths = legacy_descriptor, legacy_paths
+    if not descriptor:
+        return PolycycleDescriptorCandidate(descriptor=descriptor, paths=paths)
+    if not is_von_baeyer_descriptor(descriptor):
+        return PolycycleDescriptorCandidate(descriptor=descriptor, paths=paths)
+    numberings = tuple(_audited_von_baeyer_numberings(mol, descriptor, paths, frozenset(edges)))
+    return PolycycleDescriptorCandidate(
+        descriptor=descriptor,
+        paths=_dedupe_numbering_paths([list(numbering.path) for numbering in numberings]),
+        is_von_baeyer=True,
+        numberings=numberings,
+    )
+
+
+def _has_multiple_spiro_centers(nodes: set[int], edges: set[tuple[int, int]]) -> bool:
+    degrees = dict.fromkeys(nodes, 0)
+    for u, v in edges:
+        degrees[u] += 1
+        degrees[v] += 1
+    return sum(1 for degree in degrees.values() if degree >= 4) >= 2

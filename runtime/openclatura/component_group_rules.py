@@ -1,0 +1,119 @@
+"""Data-driven component functional-group preprocessing."""
+
+from collections.abc import Callable
+
+from .chalcogen_roles import ChalcogenLigandRole, DerivativeKind, FunctionalFamily
+from .group_atom_roles import (
+    amide_nitrogen,
+    bridge_oxygen,
+    ester_single_oxygen,
+    group_carbon_off_attachment,
+    hydrazone_characteristic_carbon,
+    peroxy_ester_single_oxygen,
+    sulfonyl_sulfur,
+)
+from .molecule import Molecule
+from .nomenclature import RULES, FunctionalGroupCapability
+from .perception import PerceivedGroup
+
+AtomSelector = Callable[[Molecule, PerceivedGroup], int | None]
+
+
+NONPARENT_ATOM_SELECTORS: dict[str, AtomSelector] = {"anhydride": bridge_oxygen}
+NONPARENT_ATOM_SELECTORS.update(
+    dict.fromkeys(
+        RULES.functional_groups.keys_with_family("ester_like")
+        - RULES.functional_groups.keys_with_family("peroxy_ester"),
+        ester_single_oxygen,
+    )
+)
+NONPARENT_ATOM_SELECTORS.update(
+    dict.fromkeys(RULES.functional_groups.keys_with_family("peroxy_ester"), peroxy_ester_single_oxygen)
+)
+NONPARENT_ATOM_SELECTORS.update(dict.fromkeys(RULES.functional_groups.keys_with_family("sulfonyl"), sulfonyl_sulfur))
+NONPARENT_ATOM_SELECTORS.update(dict.fromkeys(RULES.functional_groups.keys_with_family("amide_like"), amide_nitrogen))
+NONPARENT_ATOM_SELECTORS.update(
+    dict.fromkeys(("isocyano", "isocyanato", "isothiocyanato", "cyanato", "thiocyanato"), group_carbon_off_attachment)
+)
+
+
+def retarget_external_carbonyl_groups(
+    mol: Molecule,
+    perceived_groups: list[PerceivedGroup],
+    principal_key: str | None,
+    exclude_atoms: set[int],
+    cyclic_atoms_all: set[int],
+) -> None:
+    """Move exocyclic carbonyl group attachment onto the parent chain atom."""
+
+    for group in perceived_groups:
+        if (
+            group.key == principal_key
+            or group.resolved_rule is None
+            or not group.resolved_rule.has_capability(FunctionalGroupCapability.CHAIN_EXTERNAL_CARBONYL)
+        ):
+            continue
+        group_c = group.attachment_carbon
+        if group_c in cyclic_atoms_all:
+            continue
+        adj_c = [n for n in mol.get_neighbors(group_c) if mol.atoms[n].is_carbon and n not in group.atoms_involved]
+        if len(adj_c) == 1:
+            group.attachment_carbon = adj_c[0]
+            group.atoms_involved.add(group_c)
+            exclude_atoms.add(group_c)
+
+
+def exclude_nonparent_group_atoms(
+    mol: Molecule, perceived_groups: list[PerceivedGroup], exclude_atoms: set[int], cyclic_atoms_all: set[int]
+) -> None:
+    """Exclude linker atoms that should not become part of the parent skeleton."""
+
+    for group in perceived_groups:
+        selector = NONPARENT_ATOM_SELECTORS.get(group.key)
+        atom_indices = {atom_idx} if selector and (atom_idx := selector(mol, group)) is not None else set()
+        if (
+            not atom_indices
+            and group.descriptor is not None
+            and group.descriptor.family is FunctionalFamily.ACYL
+            and group.descriptor.derivative is DerivativeKind.ESTER
+        ):
+            atom_indices.update(
+                ligand.atom for ligand in group.descriptor.ligands if ligand.role is ChalcogenLigandRole.CARBON_LINK
+            )
+        if (
+            not atom_indices
+            and group.descriptor is not None
+            and group.descriptor.family is FunctionalFamily.ACYL
+            and group.descriptor.derivative in {DerivativeKind.AMIDE, DerivativeKind.HYDRAZIDE, DerivativeKind.UREA}
+        ):
+            if (atom_idx := amide_nitrogen(mol, group)) is not None:
+                atom_indices.add(atom_idx)
+        if (
+            group.descriptor is not None
+            and group.descriptor.derivative is DerivativeKind.ACYL_PSEUDOHALIDE
+            and group.descriptor.leaving_group is not None
+        ):
+            atom_indices.update(group.descriptor.leaving_group.atom_ids)
+        if group.descriptor is not None and group.descriptor.family is FunctionalFamily.CENTRAL_ACID:
+            atom_indices.update(group.descriptor.centers)
+            atom_indices.update(
+                ligand.atom for ligand in group.descriptor.ligands if ligand.role is ChalcogenLigandRole.CARBON_LINK
+            )
+        exclude_atoms.update(atom_idx for atom_idx in atom_indices if atom_idx not in cyclic_atoms_all)
+
+
+def principal_involved_atoms(
+    mol: Molecule, perceived_groups: list[PerceivedGroup], principal_key: str | None, parent_path: list[int]
+) -> set[int]:
+    """Return atoms already consumed by the principal group on the parent."""
+
+    atoms = set()
+    if principal_key:
+        for group in perceived_groups:
+            if group.key == principal_key and group.attachment_carbon in parent_path:
+                atoms.update(group.atoms_involved)
+                if group.key in {"ring_aldehyde_hydrazone", "ring_aldehyde_amidinohydrazone"}:
+                    hydrazone_carbon = hydrazone_characteristic_carbon(mol, group)
+                    if hydrazone_carbon is not None and hydrazone_carbon not in parent_path:
+                        atoms.add(hydrazone_carbon)
+    return atoms

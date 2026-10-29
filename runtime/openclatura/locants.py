@@ -1,0 +1,191 @@
+"""Locant parsing and atom/bond locant helpers."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from functools import lru_cache
+
+from .assembly_utils import parse_locant as parse_locant
+from .molecule import Molecule
+
+_SYSTEM_LOCANT_RE = re.compile(r"^(?P<base>[1-9][0-9]*)(?P<suffix>[a-z]*)(?:\^(?P<distance>[1-9][0-9]*))?$")
+_SUPERSCRIPT_TO_ASCII = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁻", "0123456789-")
+_ASCII_TO_SUPERSCRIPT = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class SystemLocant:
+    """A locant in a completed fused parent system."""
+
+    base: int
+    fusion_suffix: str = ""
+    interior_distance: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.base <= 0:
+            raise ValueError("system locant base must be positive")
+        if self.fusion_suffix and (
+            not self.fusion_suffix.isascii()
+            or not self.fusion_suffix.isalpha()
+            or self.fusion_suffix != self.fusion_suffix.lower()
+        ):
+            raise ValueError("fusion suffix must be a lowercase ASCII letter sequence")
+        if self.interior_distance is not None and self.interior_distance <= 0:
+            raise ValueError("interior distance must be positive")
+
+    def render(self, *, unicode_superscript: bool = True) -> str:
+        text = f"{self.base}{self.fusion_suffix}"
+        if self.interior_distance is None:
+            return text
+        distance = str(self.interior_distance)
+        rendered = distance.translate(_ASCII_TO_SUPERSCRIPT) if unicode_superscript else f"^{distance}"
+        return f"{text}{rendered}"
+
+    def __str__(self) -> str:
+        return self.render()
+
+
+class DisplayLocant(int):
+    """Integer locant with a separate display representation."""
+
+    def __new__(cls, value: int, display: str | None = None):
+        obj = int.__new__(cls, value)
+        obj.display = str(value) if display is None else str(display)
+        return obj
+
+
+def as_display_locant(locant: int, display: str | None = None) -> DisplayLocant:
+    """Return a display-aware locant while preserving existing display text."""
+
+    if isinstance(locant, DisplayLocant) and display is None:
+        return locant
+    inherited_display = getattr(locant, "display", None)
+    return DisplayLocant(int(locant), display if display is not None else inherited_display)
+
+
+def locant_text(locant: int, display: str | None = None) -> str:
+    """Return the rendered text for a locant."""
+
+    if display is not None:
+        return str(display)
+    inherited_display = getattr(locant, "display", None)
+    return str(locant) if inherited_display is None else str(inherited_display)
+
+
+def get_atom_locants(oriented_path: list[int], target_indices: set[int]) -> list[int]:
+    """Return locants for target atoms in an oriented parent path."""
+
+    return sorted(oriented_path.index(i) + 1 for i in target_indices if i in oriented_path)
+
+
+def get_bond_locants(
+    mol: Molecule,
+    oriented_path: list[int],
+    is_bicycle: bool,
+    is_spiro: bool,
+    is_polycycle: bool,
+) -> tuple[list[int], list[int]]:
+    """Return double- and triple-bond locants for an oriented parent path."""
+
+    double_locs = []
+    triple_locs = []
+    seen_bonds = set()
+    for u in oriented_path:
+        for v in mol.get_neighbors(u):
+            if v in oriented_path:
+                bond = mol.get_bond(u, v)
+                if bond and bond.order > 1 and bond.idx not in seen_bonds:
+                    seen_bonds.add(bond.idx)
+                    loc_u = oriented_path.index(u) + 1
+                    loc_v = oriented_path.index(v) + 1
+                    min_loc, max_loc = min(loc_u, loc_v), max(loc_u, loc_v)
+
+                    if max_loc == min_loc + 1:
+                        locant_val = min_loc
+                    elif (
+                        min_loc == 1 and max_loc == len(oriented_path) and not (is_bicycle or is_spiro or is_polycycle)
+                    ):
+                        locant_val = max_loc
+                    else:
+                        locant_val = min_loc
+
+                    if bond.order == 2:
+                        double_locs.append(locant_val)
+                    elif bond.order == 3:
+                        triple_locs.append(locant_val)
+
+    return sorted(double_locs), sorted(triple_locs)
+
+
+@lru_cache(maxsize=1024)
+def retained_locant_sort_key(locant: str) -> tuple[int, int, str, int]:
+    """Sort system locants canonically, retaining support for legacy labels."""
+
+    try:
+        return system_locant_sort_key(locant)
+    except ValueError:
+        # Retained labels may include component primes or nonnumeric labels.
+        pass
+
+    digits = ""
+    suffix = ""
+    for char in str(locant):
+        if char in "0123456789" and not suffix:
+            digits += char
+        else:
+            suffix += char
+    return (int(digits) if digits else 10_000, int(bool(suffix)), suffix, 0)
+
+
+def parse_system_locant(value: object):
+    """Parse a completed fused-system locant into its typed representation.
+
+    Ordinary integer locants, fusion locants such as ``4a``, and explicit
+    interior-distance forms such as ``9^2`` are accepted. Component primes are
+    intentionally excluded because they belong to fusion descriptors, not the
+    completed parent numbering namespace.
+    """
+
+    if isinstance(value, SystemLocant):
+        return value
+    text = str(value).strip()
+    if any(mark in text for mark in ("'", "′")):
+        raise ValueError(f"component prime is not valid in a system locant: {text!r}")
+    if any(char in text for char in "⁰¹²³⁴⁵⁶⁷⁸⁹"):
+        split = next((index for index, char in enumerate(text) if char in "⁰¹²³⁴⁵⁶⁷⁸⁹"), len(text))
+        text = f"{text[:split]}^{text[split:].translate(_SUPERSCRIPT_TO_ASCII)}"
+    match = _SYSTEM_LOCANT_RE.fullmatch(text)
+    if match is None:
+        raise ValueError(f"invalid completed-system locant: {value!r}")
+    distance = match.group("distance")
+    return SystemLocant(
+        base=int(match.group("base")),
+        fusion_suffix=match.group("suffix"),
+        interior_distance=int(distance) if distance else None,
+    )
+
+
+@lru_cache(maxsize=4096)
+def system_locant_sort_key(value: object) -> tuple[int, int, str, int]:
+    """Return the single canonical ordering key for completed-system locants.
+
+    Fusion numbering sorts locant labels constantly, so this runs on the order
+    of a hundred times per fused molecule while drawing on the handful of
+    labels one ring system can spell. It is memoised on the same terms as
+    ``retained_locant_sort_key`` below, which wraps it for the same reason.
+    """
+
+    locant = parse_system_locant(value)
+    return (
+        locant.base,
+        0 if not locant.fusion_suffix else 1,
+        locant.fusion_suffix,
+        locant.interior_distance or 0,
+    )
+
+
+def canonical_locant_pair(left: object, right: object) -> tuple[str, str]:
+    """Return a deterministically ordered pair of completed-system locants."""
+
+    return tuple(sorted((str(left), str(right)), key=system_locant_sort_key))

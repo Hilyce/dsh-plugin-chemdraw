@@ -1,0 +1,629 @@
+"""Central data registry for nomenclature lookup tables.
+Prefer ``RULES.<group>.<field>`` over importing individual module constants."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+from functools import lru_cache
+
+from .naming_data import grouped_namer_rules
+
+
+@dataclass(frozen=True)
+class RetainedNameRules:
+    ring_elements: set[str]
+    substituent_stems: dict[str, tuple[str, str]]
+    chain_functional_parents: dict[tuple[int, str, int], str]
+    principal_citations: dict[tuple[str, str], str]
+    monocycle_specs: tuple[dict, ...]
+    fused_polycycle_specs: tuple[dict, ...]
+
+    def citation_for(self, name: str, mode: PrincipalCitationMode) -> str:
+        return self.principal_citations.get((mode.value, name), name)
+
+
+@dataclass(frozen=True)
+class HeteroatomRules:
+    alkyl_oxy_prefixes: dict[str, str]
+    simple_sulfanyl_prefixes: set[str]
+    simple_selanyl_prefixes: set[str]
+    retained_sulfonyl_groups: dict[tuple[str, str], str]
+    retained_sulfonyl_group_acids: dict[str, str]
+    sulfonyl_ligand_contractions: tuple[tuple[str, str, str], ...]
+    halogen_prefixes: dict[str, str]
+    halogen_lambda_suffixes: dict[str, str]
+
+
+@dataclass(frozen=True)
+class RingRules:
+    descriptor_templates: dict[str, str]
+    polycycle_prefixes: dict[int, str]
+
+
+@dataclass(frozen=True)
+class PrefixRules:
+    peroxy_ester_groups: set[str]
+    amide_like_groups: set[str]
+
+
+@dataclass(frozen=True)
+class ComponentRules:
+    salt_metal_names: set[str]
+    mononuclear_parent_hydrides: dict[str, str]
+    retained_homonuclear_chain_names: dict[str, str]
+    replacement_parent_oxoacid_specs: tuple[dict, ...]
+
+
+@dataclass(frozen=True)
+class IonRules:
+    single_atom_cations: set[str]
+    single_atom_anions: dict[str, str]
+
+
+@dataclass(frozen=True)
+class ParentChargeSuffixRule:
+    suffix: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class AnionSuffixPlacementRule:
+    key: str
+    suffix_pattern: str
+    placement: str
+    reason: str
+    atom_symbols: tuple[str, ...] = ("*",)
+
+
+@dataclass(frozen=True)
+class ChargeRules:
+    retained_ionic_n_parents: dict[str, str]
+    saturated_n_ring_ionic_parents: dict[int, str]
+    parent_charge_suffixes: dict[str, ParentChargeSuffixRule]
+    replacement_charge_prefixes: dict[str, str]
+    replacement_charge_states: dict[tuple[str, int, int], str]
+    heteroatom_charge_prefixes: dict[str, str]
+    anion_suffix_placements: tuple[AnionSuffixPlacementRule, ...]
+
+
+@dataclass(frozen=True)
+class AssemblyRules:
+    replacement_prefix_order: dict[str, int]
+    unsaturation_order: dict[str, int]
+    acid_halide_suffix_keys: set[str]
+    substituent_sort_prefix_pattern: str
+    substituent_attachment_suffixes: dict[str, str]
+    ambiguous_connection_substituent_stems: set[str]
+    suffix_nitrogen_markers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class LiteralReplacement:
+    pattern: str
+    replacement: str
+    category: str = "migration"
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class PostprocessRules:
+    literal_replacements: tuple[LiteralReplacement, ...]
+
+
+@dataclass(frozen=True)
+class MultiSuffixTemplate:
+    """Template for rendering multiple principal characteristic groups."""
+
+    multiplier_positions: tuple[int, ...] = (0,)
+
+
+class PrincipalCitationMode(StrEnum):
+    """A structured context that selects an alternate principal citation."""
+
+    ANHYDRIDE_HALF = "anhydride_half"
+
+
+class FunctionalGroupCapability(StrEnum):
+    """Typed assembly behaviors declared by functional-group rule data."""
+
+    ACID_HALIDE = "acid_halide"
+    ACYL_LEAVING_GROUP = "acyl_leaving_group"
+    AMIDE_LIKE = "amide_like"
+    ANHYDRIDE = "anhydride"
+    BLOCKS_STRUCTURAL_PARENT = "blocks_structural_parent"
+    CENTRAL_ACID = "central_acid"
+    CHAIN_EXTERNAL_CARBONYL = "chain_external_carbonyl"
+    ELEMENT_LOCANTED_SUFFIX = "element_locanted_suffix"
+    ESTER_LIKE = "ester_like"
+    FRONT_MODIFIER = "front_modifier"
+    HYDRAZIDE = "hydrazide"
+    PROMOTES_MEMBER_GROUPS = "promotes_member_groups"
+    UREA = "urea"
+
+
+class ChalcogenCitationContext(StrEnum):
+    """Structural contexts which can select an established citation route."""
+
+    PEROXOL = "peroxol"
+    PEROXIDE = "peroxide"
+    ANHYDRIDE = "anhydride"
+    ACYL = "acyl"
+
+
+class ChalcogenCitationRoute(StrEnum):
+    """How a recognized chalcogen topology enters the existing namer."""
+
+    GENERIC = "generic"
+    EXISTING = "existing"
+
+
+class ChalcogenCitationProjection(StrEnum):
+    """Structural projection used to enter an established citation path."""
+
+    DEFER = "defer"
+    PEROXY_ESTER = "peroxy_ester"
+    ESTER_OR_CARBONYL = "ester_or_carbonyl"
+    CARBONYL = "carbonyl"
+    ESTER = "ester"
+
+
+@dataclass(frozen=True)
+class ChalcogenCitationRule:
+    context: ChalcogenCitationContext
+    route: ChalcogenCitationRoute
+    allowed_elements: frozenset[str]
+    required_elements: frozenset[str]
+    bridge_atom_count: int | None = None
+    projection: ChalcogenCitationProjection = ChalcogenCitationProjection.DEFER
+    allowed_site_elements: frozenset[str] = frozenset()
+    required_site_elements: frozenset[str] = frozenset()
+    allowed_bridge_elements: frozenset[str] = frozenset()
+    required_bridge_elements: frozenset[str] = frozenset()
+    bridge_prefix: tuple[str, ...] = ()
+
+    def matches(
+        self,
+        elements: tuple[str, ...],
+        bridge_atom_count: int,
+        site_elements: tuple[str, ...] = (),
+        bridge_elements: tuple[str, ...] = (),
+    ) -> bool:
+        present = frozenset(elements)
+        sites = frozenset(site_elements)
+        bridge = frozenset(bridge_elements)
+        return (
+            present <= self.allowed_elements
+            and self.required_elements <= present
+            and (not self.allowed_site_elements or sites <= self.allowed_site_elements)
+            and self.required_site_elements <= sites
+            and (not self.allowed_bridge_elements or bridge <= self.allowed_bridge_elements)
+            and self.required_bridge_elements <= bridge
+            and (not self.bridge_prefix or bridge_elements[: len(self.bridge_prefix)] == self.bridge_prefix)
+            and (self.bridge_atom_count is None or self.bridge_atom_count == bridge_atom_count)
+        )
+
+
+_FAMILY_CAPABILITIES = {capability.value: capability for capability in FunctionalGroupCapability}
+
+
+@dataclass(frozen=True)
+class FunctionalGroupRule:
+    key: str
+    role: str
+    prefix: str | None = None
+    suffix: str | None = None
+    multi_suffix: MultiSuffixTemplate | None = None
+    suffix_multiplier_positions: tuple[int, ...] = (0,)
+    seniority: int | tuple[int, ...] | None = None
+    suffix_with_locant: bool = False
+    needs_locant: bool = True
+    families: tuple[str, ...] = ()
+    capabilities: frozenset[FunctionalGroupCapability] = frozenset()
+    citation_suffixes: tuple[tuple[PrincipalCitationMode, str], ...] = ()
+
+    def has_capability(self, capability: FunctionalGroupCapability) -> bool:
+        return capability in self.capabilities
+
+    def suffix_for_citation(self, mode: PrincipalCitationMode | None) -> str | None:
+        if mode is None:
+            return self.suffix
+        return dict(self.citation_suffixes).get(mode, self.suffix)
+
+
+@dataclass(frozen=True)
+class ChalcogenNomenclatureRules:
+    """Data-backed vocabulary and policies keyed by structural descriptor axes."""
+
+    elements: dict[str, dict]
+    simple_group_keys: dict[tuple[str, str, str, bool], str]
+    chalcogenide_class_names: dict[str, str]
+    peroxide_class_names: dict[frozenset[str], str]
+    peroxol_rules: dict[tuple[str, str], dict]
+    citation_routes: tuple[ChalcogenCitationRule, ...]
+    standard_acyl_keys: dict[tuple[str, str, str | None, bool], str]
+    standard_peroxy_acyl_keys: dict[tuple[str, bool], str]
+    acyl_leaving_groups: dict[str, dict]
+    central_acid_origins: dict[tuple[str, int], dict]
+    policies: dict[str, dict]
+    templates: dict[str, str]
+
+
+@dataclass(frozen=True)
+class FunctionalGroupRules:
+    by_key: dict[str, FunctionalGroupRule]
+
+    def get(self, key: str) -> FunctionalGroupRule:
+        return self.by_key[key]
+
+    def prefix_for(self, key: str) -> str | None:
+        rule = self.by_key.get(key)
+        return rule.prefix if rule else None
+
+    def cited_prefix_for(self, key: str) -> str | None:
+        prefix = self.prefix_for(key)
+        if prefix is None:
+            return None
+        rule = self.by_key[key]
+        if rule.has_capability(FunctionalGroupCapability.ACYL_LEAVING_GROUP):
+            return f"({prefix})"
+        return prefix
+
+    def direct_subgraph_prefix_for(self, key: str) -> str | None:
+        rule = self.by_key.get(key)
+        if rule is None:
+            return None
+        if rule.role == "prefix" or "direct_group" in rule.families:
+            return rule.prefix
+        return None
+
+    def principal_keys(self) -> set[str]:
+        return {key for key, rule in self.by_key.items() if rule.role == "principal"}
+
+    def most_senior(self, keys: list[str]) -> FunctionalGroupRule:
+        principal_rules = [
+            self.by_key[key] for key in keys if key in self.by_key and self.by_key[key].seniority is not None
+        ]
+        if not principal_rules:
+            raise KeyError(f"No seniority metadata for functional-group keys: {keys!r}")
+        return min(principal_rules, key=lambda rule: rule.seniority)
+
+    def keys_with_family(self, family: str) -> set[str]:
+        return {key for key, rule in self.by_key.items() if family in rule.families}
+
+    def keys_with_capability(self, capability: FunctionalGroupCapability) -> set[str]:
+        """Return registry keys declaring one typed assembly behavior."""
+
+        return {key for key, rule in self.by_key.items() if rule.has_capability(capability)}
+
+
+@dataclass(frozen=True)
+class NomenclatureRegistry:
+    retained: RetainedNameRules
+    heteroatoms: HeteroatomRules
+    rings: RingRules
+    prefixes: PrefixRules
+    components: ComponentRules
+    ions: IonRules
+    charges: ChargeRules
+    assembly: AssemblyRules
+    functional_groups: FunctionalGroupRules
+    chalcogens: ChalcogenNomenclatureRules
+    postprocess: PostprocessRules
+
+
+def _group_tuple_mapping(group_key: str, section: str) -> dict[str, tuple[str, str]]:
+    return {key: tuple(value) for key, value in grouped_namer_rules()[group_key].mapping(section).items()}
+
+
+def _functional_group_rules() -> FunctionalGroupRules:
+    groups = {}
+
+    for key, item in grouped_namer_rules()["functional_groups"].mapping("functional_groups").items():
+        families = tuple(item.get("families", _derived_functional_group_families(key)))
+        suffix = item.get("suffix")
+        multi_suffix = item.get("multi_suffix")
+        groups[key] = FunctionalGroupRule(
+            key=key,
+            role=item["role"],
+            prefix=item.get("prefix"),
+            suffix=suffix,
+            multi_suffix=_multi_suffix_template(suffix, multi_suffix),
+            suffix_multiplier_positions=_suffix_multiplier_positions(suffix, multi_suffix),
+            seniority=item.get("seniority"),
+            suffix_with_locant=bool(item.get("suffix_with_locant", False)),
+            needs_locant=bool(item.get("needs_locant", True)),
+            families=families,
+            capabilities=frozenset(
+                {
+                    *(_FAMILY_CAPABILITIES[family] for family in families if family in _FAMILY_CAPABILITIES),
+                    *(FunctionalGroupCapability(capability) for capability in item.get("capabilities", ())),
+                }
+            ),
+            citation_suffixes=tuple(
+                (PrincipalCitationMode(mode), suffix) for mode, suffix in item.get("citation_suffixes", {}).items()
+            ),
+        )
+    chalcogen_group = grouped_namer_rules()["chalcogen_nomenclature"]
+    templates = chalcogen_group.mapping("chalcogen_templates")
+    leaving_policy = chalcogen_group.mapping("chalcogen_rule_policies")["acyl"]["acid_halide"]
+    leaving_capabilities = frozenset(
+        FunctionalGroupCapability(capability) for capability in leaving_policy["capabilities"]
+    )
+    leaving_families = tuple(leaving_policy["families"])
+    for item in chalcogen_group.mapping("chalcogen_acyl_leaving_groups").values():
+        prefix = templates["ordinary_acyl_leaving_prefix"].format(prefix=item["prefix"])
+        for external, key_field, suffix_template in (
+            (False, "chain_key", "ordinary_acyl_leaving_chain_suffix"),
+            (True, "external_key", "ordinary_acyl_leaving_external_suffix"),
+        ):
+            key = item[key_field]
+            groups[key] = FunctionalGroupRule(
+                key=key,
+                role="principal",
+                prefix=prefix,
+                suffix=templates[suffix_template].format(word=item["word"]),
+                multi_suffix=MultiSuffixTemplate((0, 1)),
+                suffix_multiplier_positions=(0, 1),
+                seniority=(int(leaving_policy["seniority"]), int(item["rank"])),
+                suffix_with_locant=external,
+                needs_locant=True,
+                families=leaving_families,
+                capabilities=leaving_capabilities,
+            )
+    return FunctionalGroupRules(by_key=groups)
+
+
+def _multi_suffix_template(suffix: str | None, multi_suffix) -> MultiSuffixTemplate | None:
+    if multi_suffix is None:
+        return None
+    return MultiSuffixTemplate(multiplier_positions=_suffix_multiplier_positions(suffix, multi_suffix))
+
+
+def _suffix_multiplier_positions(suffix: str | None, multi_suffix) -> tuple[int, ...]:
+    """Return which words in a suffix phrase take multiplicative prefixes.  Built-in rows store
+    ``multi_suffix`` as a template object; string support remains for older override data."""
+
+    if not suffix:
+        return (0,)
+    if isinstance(multi_suffix, dict):
+        return tuple(int(position) for position in multi_suffix.get("multiplier_positions", [0]))
+    words = suffix.split()
+    if len(words) == 1:
+        return (0,)
+    if not multi_suffix:
+        return (0,)
+    multi_words = multi_suffix.split()
+    if len(multi_words) != len(words):
+        return (0,)
+    positions = []
+    for idx, (word, multi_word) in enumerate(zip(words, multi_words, strict=True)):
+        if multi_word == f"di{word}":
+            positions.append(idx)
+    return tuple(positions) or (0,)
+
+
+def _derived_functional_group_families(key: str) -> tuple[str, ...]:
+    families = set()
+    functional_group_rules = grouped_namer_rules()["functional_groups"]
+    substituent_vocabulary = grouped_namer_rules()["substituent_vocabulary"]
+    family_sections = {
+        "chain_external_carbonyl": "chain_external_carbonyl_groups",
+        "prefix_skip": "prefix_groups_to_skip",
+        "ester_like": "ester_like_prefix_groups",
+        "peroxy_ester": "peroxy_ester_groups",
+        "amide_like": "amide_like_prefix_groups",
+        "carboxy_prefix": "carboxy_prefix_groups",
+        "cyano_prefix": "cyano_prefix_groups",
+        "peroxy_acid": "peroxy_acid_prefix_groups",
+        "sulfonyl": "sulfonyl_prefix_groups",
+        "front_modifier": "front_modifier_principal_groups",
+        "hydrazone": "hydrazone_principal_groups",
+    }
+    for family, section in family_sections.items():
+        if key in functional_group_rules.values(section):
+            families.add(family)
+    if key in substituent_vocabulary.mapping("acid_halide_prefixes"):
+        families.add("acid_halide")
+    if key in substituent_vocabulary.mapping("direct_prefix_groups"):
+        families.add("direct_prefix")
+    if key in substituent_vocabulary.mapping("direct_group_prefixes"):
+        families.add("direct_group")
+    return tuple(sorted(families))
+
+
+def _postprocess_rules() -> PostprocessRules:
+    group = grouped_namer_rules()["postprocessing"]
+    return PostprocessRules(
+        literal_replacements=tuple(
+            LiteralReplacement(
+                pattern=item["pattern"],
+                replacement=item["replacement"],
+                category=item["category"],
+                reason=item["reason"],
+            )
+            for item in group.values("postprocess_literal_replacements")
+        ),
+    )
+
+
+def _chalcogen_rules() -> ChalcogenNomenclatureRules:
+    group = grouped_namer_rules()["chalcogen_nomenclature"]
+    return ChalcogenNomenclatureRules(
+        elements=group.mapping("chalcogen_elements"),
+        simple_group_keys={
+            (row["family"], row["derivative"], row["element"], bool(row.get("external", False))): row["key"]
+            for row in group.values("chalcogen_simple_group_keys")
+        },
+        chalcogenide_class_names=group.mapping("chalcogenide_class_names"),
+        peroxide_class_names={
+            frozenset(row["elements"]): row["name"] for row in group.values("chalcogen_peroxide_class_names")
+        },
+        peroxol_rules={(row["first"], row["terminal"]): row for row in group.values("chalcogen_peroxol_rules")},
+        citation_routes=tuple(
+            ChalcogenCitationRule(
+                context=ChalcogenCitationContext(row["context"]),
+                route=ChalcogenCitationRoute(row["route"]),
+                allowed_elements=frozenset(row["allowed_elements"]),
+                required_elements=frozenset(row.get("required_elements", ())),
+                bridge_atom_count=row.get("bridge_atom_count"),
+                projection=ChalcogenCitationProjection(row.get("projection", "defer")),
+                allowed_site_elements=frozenset(row.get("allowed_site_elements", ())),
+                required_site_elements=frozenset(row.get("required_site_elements", ())),
+                allowed_bridge_elements=frozenset(row.get("allowed_bridge_elements", ())),
+                required_bridge_elements=frozenset(row.get("required_bridge_elements", ())),
+                bridge_prefix=tuple(row.get("bridge_prefix", ())),
+            )
+            for row in group.values("chalcogen_citation_routes")
+        ),
+        standard_acyl_keys={
+            (
+                row["derivative"],
+                row["double_element"],
+                row.get("single_element"),
+                bool(row.get("external", False)),
+            ): row["key"]
+            for row in group.values("chalcogen_standard_acyl_keys")
+        },
+        standard_peroxy_acyl_keys={
+            (row["derivative"], bool(row.get("external", False))): row["key"]
+            for row in group.values("chalcogen_standard_peroxy_acyl_keys")
+        },
+        acyl_leaving_groups=group.mapping("chalcogen_acyl_leaving_groups"),
+        central_acid_origins={
+            (row["element"], int(row["double_bond_count"])): row
+            for row in group.values("chalcogen_central_acid_origins")
+        },
+        policies=group.mapping("chalcogen_rule_policies"),
+        templates=group.mapping("chalcogen_templates"),
+    )
+
+
+def _charge_rules() -> ChargeRules:
+    group = grouped_namer_rules()["charges"]
+    return ChargeRules(
+        retained_ionic_n_parents=group.mapping("retained_ionic_n_parents"),
+        saturated_n_ring_ionic_parents={
+            int(key): value for key, value in group.mapping("saturated_n_ring_ionic_parents").items()
+        },
+        parent_charge_suffixes={
+            key: ParentChargeSuffixRule(
+                suffix=value["suffix"],
+                reason=value["reason"],
+            )
+            for key, value in group.mapping("parent_charge_suffixes").items()
+        },
+        replacement_charge_prefixes=group.mapping("replacement_charge_prefixes"),
+        replacement_charge_states={
+            (row["symbol"], row["charge"], row["valence"]): row["prefix"]
+            for row in group.values("replacement_charge_states")
+        },
+        heteroatom_charge_prefixes=group.mapping("heteroatom_charge_prefixes"),
+        anion_suffix_placements=tuple(
+            AnionSuffixPlacementRule(
+                key=item["key"],
+                suffix_pattern=item.get("suffix_pattern", ""),
+                placement=item["placement"],
+                reason=item["reason"],
+                atom_symbols=tuple(item.get("atom_symbols", ["*"])),
+            )
+            for item in group.values("anion_suffix_placements")
+        ),
+    )
+
+
+@lru_cache(maxsize=1)
+def registry() -> NomenclatureRegistry:
+    """Return the grouped nomenclature lookup registry."""
+
+    groups = grouped_namer_rules()
+    retained = groups["retained_parents"]
+    simple_components = groups["simple_components"]
+    substituent_vocabulary = groups["substituent_vocabulary"]
+    functional_group_rules = groups["functional_groups"]
+    ring_descriptors = groups["ring_descriptors"]
+    assembly_grammar = groups["assembly_grammar"]
+    return NomenclatureRegistry(
+        retained=RetainedNameRules(
+            ring_elements=set(retained.values("retained_ring_elements")),
+            substituent_stems=_group_tuple_mapping("retained_parents", "retained_substituent_stems"),
+            chain_functional_parents={
+                (int(row["length"]), row["group"], int(row["count"])): row["name"]
+                for row in retained.values("retained_chain_functional_parents")
+            },
+            principal_citations={
+                (row["mode"], row["name"]): row["citation"] for row in retained.values("retained_principal_citations")
+            },
+            monocycle_specs=tuple(retained.values("retained_monocycle_specs")),
+            fused_polycycle_specs=tuple(retained.values("retained_fused_polycycle_specs")),
+        ),
+        heteroatoms=HeteroatomRules(
+            alkyl_oxy_prefixes=substituent_vocabulary.mapping("alkyl_oxy_prefixes"),
+            simple_sulfanyl_prefixes=set(substituent_vocabulary.values("simple_sulfanyl_prefixes")),
+            simple_selanyl_prefixes=set(substituent_vocabulary.values("simple_selanyl_prefixes")),
+            retained_sulfonyl_groups={
+                (row["branch"], row["suffix"]): row["name"]
+                for row in substituent_vocabulary.values("retained_sulfonyl_group_names")
+            },
+            retained_sulfonyl_group_acids={
+                row["acid"]: row["name"]
+                for row in substituent_vocabulary.values("retained_sulfonyl_group_names")
+                if row.get("acid")
+            },
+            sulfonyl_ligand_contractions=tuple(
+                (row["ligand_ending"], row["suffix"], row["name"])
+                for row in substituent_vocabulary.values("retained_sulfonyl_ligand_contractions")
+            ),
+            halogen_prefixes=substituent_vocabulary.mapping("halogen_prefixes"),
+            halogen_lambda_suffixes=substituent_vocabulary.mapping("halogen_lambda_suffixes"),
+        ),
+        rings=RingRules(
+            descriptor_templates=ring_descriptors.mapping("ring_descriptor_templates"),
+            polycycle_prefixes={
+                int(key): value for key, value in ring_descriptors.mapping("polycycle_prefixes").items()
+            },
+        ),
+        prefixes=PrefixRules(
+            peroxy_ester_groups=set(functional_group_rules.values("peroxy_ester_groups")),
+            amide_like_groups=set(functional_group_rules.values("amide_like_prefix_groups")),
+        ),
+        components=ComponentRules(
+            salt_metal_names=set(simple_components.values("salt_metal_names")),
+            mononuclear_parent_hydrides=simple_components.mapping("mononuclear_parent_hydrides"),
+            retained_homonuclear_chain_names=simple_components.mapping("retained_homonuclear_chain_names"),
+            replacement_parent_oxoacid_specs=tuple(simple_components.values("replacement_parent_oxoacid_specs")),
+        ),
+        ions=IonRules(
+            single_atom_cations=set(simple_components.values("single_atom_cations")),
+            single_atom_anions=simple_components.mapping("single_atom_anions"),
+        ),
+        charges=_charge_rules(),
+        assembly=AssemblyRules(
+            replacement_prefix_order={
+                key: int(value) for key, value in assembly_grammar.mapping("replacement_prefix_order").items()
+            },
+            unsaturation_order={
+                key: int(value) for key, value in assembly_grammar.mapping("unsaturation_order").items()
+            },
+            acid_halide_suffix_keys={
+                *assembly_grammar.values("acid_halide_suffix_keys"),
+                *(
+                    item[key_field]
+                    for item in groups["chalcogen_nomenclature"].mapping("chalcogen_acyl_leaving_groups").values()
+                    for key_field in ("chain_key", "external_key")
+                ),
+            },
+            substituent_sort_prefix_pattern=assembly_grammar.mapping("substituent_sort")["prefix_pattern"],
+            substituent_attachment_suffixes=assembly_grammar.mapping("substituent_attachment_suffixes"),
+            ambiguous_connection_substituent_stems=set(
+                assembly_grammar.values("ambiguous_connection_substituent_stems")
+            ),
+            suffix_nitrogen_markers=tuple(assembly_grammar.values("suffix_nitrogen_markers")),
+        ),
+        functional_groups=_functional_group_rules(),
+        chalcogens=_chalcogen_rules(),
+        postprocess=_postprocess_rules(),
+    )
+
+
+RULES = registry()

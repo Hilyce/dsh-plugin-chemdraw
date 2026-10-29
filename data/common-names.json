@@ -1,0 +1,564 @@
+{
+ "version": 1,
+ "note": "Full InChIKey entries; lookup falls back to the first 14 chars (connectivity, stereo-insensitive).",
+ "entries": [
+  {
+   "key": "ATUOYWHBWRKTHZ-UHFFFAOYSA-N",
+   "zh": "丙烷",
+   "en": "propane",
+   "smiles": "CCC"
+  },
+  {
+   "key": "BDAGIHXWWSANSR-UHFFFAOYSA-N",
+   "zh": "甲酸",
+   "en": "formic acid",
+   "smiles": "O=CO"
+  },
+  {
+   "key": "BDERNNFJNOPAEC-UHFFFAOYSA-N",
+   "zh": "丙醇",
+   "en": "propan-1-ol",
+   "smiles": "CCCO"
+  },
+  {
+   "key": "BJEPYKJPYRNKOW-UHFFFAOYSA-N",
+   "zh": "苹果酸",
+   "en": "malic acid",
+   "smiles": "O=C(O)CC(O)C(=O)O"
+  },
+  {
+   "key": "BSYNRYMUTXBXSQ-UHFFFAOYSA-N",
+   "zh": "阿司匹林",
+   "en": "aspirin",
+   "smiles": "CC(=O)Oc1ccccc1C(=O)O"
+  },
+  {
+   "key": "CIWBSHSKHKDKBQ-JLAZNSOCSA-N",
+   "zh": "抗坏血酸",
+   "en": "ascorbic acid",
+   "smiles": "O=C1O[C@H]([C@@H](O)CO)C(O)=C1O"
+  },
+  {
+   "key": "CSCPPACGZOOCGX-UHFFFAOYSA-N",
+   "zh": "丙酮",
+   "en": "acetone",
+   "smiles": "CC(C)=O"
+  },
+  {
+   "key": "DHMQDGOQFOQNFH-UHFFFAOYSA-N",
+   "zh": "甘氨酸",
+   "en": "glycine",
+   "smiles": "NCC(=O)O"
+  },
+  {
+   "key": "DSSYKIVIOFKYAU-UHFFFAOYSA-N",
+   "zh": "樟脑",
+   "en": "camphor",
+   "smiles": "CC12CCC(CC1=O)C2(C)C"
+  },
+  {
+   "key": "FERIUCNNQQJTOY-UHFFFAOYSA-N",
+   "zh": "丁酸",
+   "en": "butyric acid",
+   "smiles": "CCCC(=O)O"
+  },
+  {
+   "key": "FEWJPZIEWOKRBE-UHFFFAOYSA-N",
+   "zh": "酒石酸",
+   "en": "tartaric acid",
+   "smiles": "O=C(O)C(O)C(O)C(=O)O"
+  },
+  {
+   "key": "FZERHIULMFGESH-UHFFFAOYSA-N",
+   "zh": "乙酰苯胺",
+   "en": "acetanilide",
+   "smiles": "CC(=O)Nc1ccccc1"
+  },
+  {
+   "key": "GZCGUPFRVQAUEE-UHFFFAOYSA-N",
+   "zh": "葡萄糖（开链）",
+   "en": "glucose (open chain)",
+   "smiles": "O=CC(O)C(O)C(O)C(O)CO"
+  },
+  {
+   "key": "HEDRZPFGACZZDS-UHFFFAOYSA-N",
+   "zh": "氯仿",
+   "en": "chloroform",
+   "smiles": "ClC(Cl)Cl"
+  },
+  {
+   "key": "HEFNNWSXXWATRW-UHFFFAOYSA-N",
+   "zh": "布洛芬",
+   "en": "ibuprofen",
+   "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1"
+  },
+  {
+   "key": "HPXRVTGHNJAIIH-UHFFFAOYSA-N",
+   "zh": "环己醇",
+   "en": "cyclohexanol",
+   "smiles": "OC1CCCCC1"
+  },
+  {
+   "key": "HSFWRNGVRCDJHI-UHFFFAOYSA-N",
+   "zh": "乙炔",
+   "en": "acetylene",
+   "smiles": "C#C"
+  },
+  {
+   "key": "HUMNYLRZRPPJDN-UHFFFAOYSA-N",
+   "zh": "苯甲醛",
+   "en": "benzaldehyde",
+   "smiles": "O=Cc1ccccc1"
+  },
+  {
+   "key": "IAYPIBMASNFSPL-UHFFFAOYSA-N",
+   "zh": "环氧乙烷",
+   "en": "oxirane",
+   "smiles": "C1CO1"
+  },
+  {
+   "key": "IJDNQMDRQITEOD-UHFFFAOYSA-N",
+   "zh": "丁烷",
+   "en": "butane",
+   "smiles": "CCCC"
+  },
+  {
+   "key": "IKHGUXGNUITLKF-UHFFFAOYSA-N",
+   "zh": "乙醛",
+   "en": "acetaldehyde",
+   "smiles": "CC=O"
+  },
+  {
+   "key": "ISWSIDIOOBJBQZ-UHFFFAOYSA-N",
+   "zh": "苯酚",
+   "en": "phenol",
+   "smiles": "Oc1ccccc1"
+  },
+  {
+   "key": "IWDCLRJOBJJRNH-UHFFFAOYSA-N",
+   "zh": "对甲酚",
+   "en": "p-cresol",
+   "smiles": "Cc1ccc(O)cc1"
+  },
+  {
+   "key": "JHIVVAPYMSGYDF-UHFFFAOYSA-N",
+   "zh": "环己酮",
+   "en": "cyclohexanone",
+   "smiles": "O=C1CCCCC1"
+  },
+  {
+   "key": "JUJWROOIHBZHMG-UHFFFAOYSA-N",
+   "zh": "吡啶",
+   "en": "pyridine",
+   "smiles": "c1ccncc1"
+  },
+  {
+   "key": "JVTAAEKCZFNVCJ-UHFFFAOYSA-N",
+   "zh": "乳酸",
+   "en": "lactic acid",
+   "smiles": "CC(O)C(=O)O"
+  },
+  {
+   "key": "KAESVJOAVNADME-UHFFFAOYSA-N",
+   "zh": "吡咯",
+   "en": "pyrrole",
+   "smiles": "c1cc[nH]c1"
+  },
+  {
+   "key": "KDYFGRWQOYBRFD-UHFFFAOYSA-N",
+   "zh": "琥珀酸",
+   "en": "succinic acid",
+   "smiles": "O=C(O)CCC(=O)O"
+  },
+  {
+   "key": "KFZMGEQAYNKOFK-UHFFFAOYSA-N",
+   "zh": "异丙醇",
+   "en": "propan-2-ol",
+   "smiles": "CC(C)O"
+  },
+  {
+   "key": "KRKNYBCHXYNGOX-UHFFFAOYSA-N",
+   "zh": "柠檬酸",
+   "en": "citric acid",
+   "smiles": "O=C(O)CC(O)(CC(=O)O)C(=O)O"
+  },
+  {
+   "key": "KWOLFJPFCHCOCG-UHFFFAOYSA-N",
+   "zh": "苯乙酮",
+   "en": "acetophenone",
+   "smiles": "CC(=O)c1ccccc1"
+  },
+  {
+   "key": "LCGLNKUTAGEVQW-UHFFFAOYSA-N",
+   "zh": "甲醚",
+   "en": "dimethyl ether",
+   "smiles": "COC"
+  },
+  {
+   "key": "LFQSCWFLJHTTHZ-UHFFFAOYSA-N",
+   "zh": "乙醇",
+   "en": "ethanol",
+   "smiles": "CCO"
+  },
+  {
+   "key": "LQNUZADURLCDLV-UHFFFAOYSA-N",
+   "zh": "硝基苯",
+   "en": "nitrobenzene",
+   "smiles": "O=[N+]([O-])c1ccccc1"
+  },
+  {
+   "key": "LVZWSLJZHVFIQJ-UHFFFAOYSA-N",
+   "zh": "环丙烷",
+   "en": "cyclopropane",
+   "smiles": "C1CC1"
+  },
+  {
+   "key": "LYCAIKOWRPUZTN-UHFFFAOYSA-N",
+   "zh": "乙二醇",
+   "en": "ethylene glycol",
+   "smiles": "OCCO"
+  },
+  {
+   "key": "MHAJPDPJQMAIIY-UHFFFAOYSA-N",
+   "zh": "过氧化氢",
+   "en": "hydrogen peroxide",
+   "smiles": "OO"
+  },
+  {
+   "key": "MTZQAGJQAFMTAQ-UHFFFAOYSA-N",
+   "zh": "苯甲酸乙酯",
+   "en": "ethyl benzoate",
+   "smiles": "CCOC(=O)c1ccccc1"
+  },
+  {
+   "key": "MUBZPKHOEPUJKR-UHFFFAOYSA-N",
+   "zh": "草酸",
+   "en": "oxalic acid",
+   "smiles": "O=C(O)C(=O)O"
+  },
+  {
+   "key": "MWOOGOJBHIARFG-UHFFFAOYSA-N",
+   "zh": "香草醛",
+   "en": "vanillin",
+   "smiles": "COc1cc(C=O)ccc1O"
+  },
+  {
+   "key": "MWPLVEDNUUSJAV-UHFFFAOYSA-N",
+   "zh": "蒽",
+   "en": "anthracene",
+   "smiles": "c1ccc2cc3ccccc3cc2c1"
+  },
+  {
+   "key": "NNPPMTNAJDCUHE-UHFFFAOYSA-N",
+   "zh": "异丁烷",
+   "en": "isobutane",
+   "smiles": "CC(C)C"
+  },
+  {
+   "key": "NOOLISFMXDJSKH-UHFFFAOYSA-N",
+   "zh": "薄荷醇",
+   "en": "menthol",
+   "smiles": "CC1CCC(C(C)C)C(O)C1"
+  },
+  {
+   "key": "OKKJLVBELUTLKV-UHFFFAOYSA-N",
+   "zh": "甲醇",
+   "en": "methanol",
+   "smiles": "CO"
+  },
+  {
+   "key": "OSWPMRLSEDHDFF-UHFFFAOYSA-N",
+   "zh": "水杨酸甲酯",
+   "en": "methyl salicylate",
+   "smiles": "COC(=O)c1ccccc1O"
+  },
+  {
+   "key": "OTMSDBZUPAUEDD-UHFFFAOYSA-N",
+   "zh": "乙烷",
+   "en": "ethane",
+   "smiles": "CC"
+  },
+  {
+   "key": "PAYRUJLWNCNPSJ-UHFFFAOYSA-N",
+   "zh": "苯胺",
+   "en": "aniline",
+   "smiles": "Nc1ccccc1"
+  },
+  {
+   "key": "PEDCQBHIVMGVHV-UHFFFAOYSA-N",
+   "zh": "甘油",
+   "en": "glycerol",
+   "smiles": "OCC(O)CO"
+  },
+  {
+   "key": "PIICEJLVQHRZGT-UHFFFAOYSA-N",
+   "zh": "乙二胺",
+   "en": "ethylenediamine",
+   "smiles": "NCCN"
+  },
+  {
+   "key": "PPBRXRYQALVLMV-UHFFFAOYSA-N",
+   "zh": "苯乙烯",
+   "en": "styrene",
+   "smiles": "C=Cc1ccccc1"
+  },
+  {
+   "key": "PVNIIMVLHYAWGP-UHFFFAOYSA-N",
+   "zh": "烟酸",
+   "en": "nicotinic acid",
+   "smiles": "O=C(O)c1cccnc1"
+  },
+  {
+   "key": "QAIPRVGONGVQAS-DUXPYHPUSA-N",
+   "zh": "咖啡酸",
+   "en": "caffeic acid",
+   "smiles": "O=C(O)/C=C/c1ccc(O)c(O)c1"
+  },
+  {
+   "key": "QNAYBMKLOCPYGJ-UHFFFAOYSA-N",
+   "zh": "丙氨酸",
+   "en": "alanine",
+   "smiles": "CC(N)C(=O)O"
+  },
+  {
+   "key": "QQONPFPTGQHPMA-UHFFFAOYSA-N",
+   "zh": "丙烯",
+   "en": "propene",
+   "smiles": "C=CC"
+  },
+  {
+   "key": "QTBSBXVTEAMEQO-UHFFFAOYSA-N",
+   "zh": "乙酸",
+   "en": "acetic acid",
+   "smiles": "CC(=O)O"
+  },
+  {
+   "key": "QWVGKYWNOKOFNN-UHFFFAOYSA-N",
+   "zh": "邻甲酚",
+   "en": "o-cresol",
+   "smiles": "Cc1ccccc1O"
+  },
+  {
+   "key": "RAXXELZNTBOGNW-UHFFFAOYSA-N",
+   "zh": "咪唑",
+   "en": "imidazole",
+   "smiles": "c1c[nH]cn1"
+  },
+  {
+   "key": "RGSFGYAAUTVSQA-UHFFFAOYSA-N",
+   "zh": "环戊烷",
+   "en": "cyclopentane",
+   "smiles": "C1CCCC1"
+  },
+  {
+   "key": "RLSSMJSEOOYNOY-UHFFFAOYSA-N",
+   "zh": "间甲酚",
+   "en": "m-cresol",
+   "smiles": "Cc1cccc(O)c1"
+  },
+  {
+   "key": "RMBFBMJGBANMMK-UHFFFAOYSA-N",
+   "zh": "三硝基甲苯",
+   "en": "TNT",
+   "smiles": "Cc1ccc([N+](=O)[O-])cc1[N+](=O)[O-]"
+  },
+  {
+   "key": "RTZKZFJDLAIYFH-UHFFFAOYSA-N",
+   "zh": "乙醚",
+   "en": "diethyl ether",
+   "smiles": "CCOCC"
+  },
+  {
+   "key": "RYYVLZVUVIJVGH-UHFFFAOYSA-N",
+   "zh": "咖啡因",
+   "en": "caffeine",
+   "smiles": "Cn1c(=O)c2c(ncn2C)n(C)c1=O"
+  },
+  {
+   "key": "RZVAJINKPMORJF-UHFFFAOYSA-N",
+   "zh": "对乙酰氨基酚",
+   "en": "paracetamol",
+   "smiles": "CC(=O)Nc1ccc(O)cc1"
+  },
+  {
+   "key": "SRSXLGNVWSONIS-UHFFFAOYSA-N",
+   "zh": "苯磺酸",
+   "en": "benzenesulfonic acid",
+   "smiles": "O=S(=O)(O)c1ccccc1"
+  },
+  {
+   "key": "UFWIBTONFRDIAS-UHFFFAOYSA-N",
+   "zh": "萘",
+   "en": "naphthalene",
+   "smiles": "c1ccc2ccccc2c1"
+  },
+  {
+   "key": "UHOVQNZJYSORNB-UHFFFAOYSA-N",
+   "zh": "苯",
+   "en": "benzene",
+   "smiles": "c1ccccc1"
+  },
+  {
+   "key": "USIUVYZYUHIAEV-UHFFFAOYSA-N",
+   "zh": "二苯醚",
+   "en": "diphenyl ether",
+   "smiles": "c1ccc(Oc2ccccc2)cc1"
+  },
+  {
+   "key": "VGGSQFUCUMXWEO-UHFFFAOYSA-N",
+   "zh": "乙烯",
+   "en": "ethylene",
+   "smiles": "C=C"
+  },
+  {
+   "key": "VNWKTOKETHGBQD-UHFFFAOYSA-N",
+   "zh": "甲烷",
+   "en": "methane",
+   "smiles": "C"
+  },
+  {
+   "key": "VZCYOOQTPOCHFL-OWOJBTEDSA-N",
+   "zh": "富马酸",
+   "en": "fumaric acid",
+   "smiles": "O=C(O)/C=C/C(=O)O"
+  },
+  {
+   "key": "VZCYOOQTPOCHFL-UPHRSURJSA-N",
+   "zh": "马来酸",
+   "en": "maleic acid",
+   "smiles": "O=C(O)/C=C\\C(=O)O"
+  },
+  {
+   "key": "VZGDMQKNWNREIO-UHFFFAOYSA-N",
+   "zh": "四氯化碳",
+   "en": "carbon tetrachloride",
+   "smiles": "ClC(Cl)(Cl)Cl"
+  },
+  {
+   "key": "WBYWAXJHAXSJNI-VOTSOKGWSA-N",
+   "zh": "肉桂酸",
+   "en": "cinnamic acid",
+   "smiles": "O=C(O)/C=C/c1ccccc1"
+  },
+  {
+   "key": "WETWJCDKMRHUPV-UHFFFAOYSA-N",
+   "zh": "乙酰氯",
+   "en": "acetyl chloride",
+   "smiles": "CC(=O)Cl"
+  },
+  {
+   "key": "WFDIJRYMOXRFFG-UHFFFAOYSA-N",
+   "zh": "乙酸酐",
+   "en": "acetic anhydride",
+   "smiles": "CC(=O)OC(C)=O"
+  },
+  {
+   "key": "WHUUTDBJXJRKMK-UHFFFAOYSA-N",
+   "zh": "谷氨酸",
+   "en": "glutamic acid",
+   "smiles": "NC(CCC(=O)O)C(=O)O"
+  },
+  {
+   "key": "WPYMKLBDIGXBTP-UHFFFAOYSA-N",
+   "zh": "苯甲酸",
+   "en": "benzoic acid",
+   "smiles": "O=C(O)c1ccccc1"
+  },
+  {
+   "key": "WQZGKKKJIJFFOK-UHFFFAOYSA-N",
+   "zh": "葡萄糖（吡喃环）",
+   "en": "glucose (pyranose)",
+   "smiles": "OCC1OC(O)C(O)C(O)C1O"
+  },
+  {
+   "key": "WSFSSNUMVMOOMR-UHFFFAOYSA-N",
+   "zh": "甲醛",
+   "en": "formaldehyde",
+   "smiles": "C=O"
+  },
+  {
+   "key": "WVDDGKGOMKODPV-UHFFFAOYSA-N",
+   "zh": "苯甲醇",
+   "en": "benzyl alcohol",
+   "smiles": "OCc1ccccc1"
+  },
+  {
+   "key": "XBDQKXXYIPTUBI-UHFFFAOYSA-N",
+   "zh": "丙酸",
+   "en": "propionic acid",
+   "smiles": "CCC(=O)O"
+  },
+  {
+   "key": "XDTMQSROBMDMFD-UHFFFAOYSA-N",
+   "zh": "环己烷",
+   "en": "cyclohexane",
+   "smiles": "C1CCCCC1"
+  },
+  {
+   "key": "XLYOFNOQVPJJNP-UHFFFAOYSA-N",
+   "zh": "水",
+   "en": "water",
+   "smiles": "O"
+  },
+  {
+   "key": "XNGIFLGASWRNHJ-UHFFFAOYSA-N",
+   "zh": "邻苯二甲酸",
+   "en": "phthalic acid",
+   "smiles": "O=C(O)c1ccccc1C(=O)O"
+  },
+  {
+   "key": "XSQUKJJJFZCRTK-UHFFFAOYSA-N",
+   "zh": "尿素",
+   "en": "urea",
+   "smiles": "NC(N)=O"
+  },
+  {
+   "key": "XUJNEKJLAYXESH-UWTATZPHSA-N",
+   "zh": "半胱氨酸",
+   "en": "cysteine",
+   "smiles": "N[C@H](CS)C(=O)O"
+  },
+  {
+   "key": "YGSDEFSMJLZEOE-UHFFFAOYSA-N",
+   "zh": "水杨酸",
+   "en": "salicylic acid",
+   "smiles": "O=C(O)c1ccccc1O"
+  },
+  {
+   "key": "YLQBMQCUIZJEEH-UHFFFAOYSA-N",
+   "zh": "呋喃",
+   "en": "furan",
+   "smiles": "c1ccoc1"
+  },
+  {
+   "key": "YTPLMLYBLZKORZ-UHFFFAOYSA-N",
+   "zh": "噻吩",
+   "en": "thiophene",
+   "smiles": "c1ccsc1"
+  },
+  {
+   "key": "YXFVVABEGXRONW-UHFFFAOYSA-N",
+   "zh": "甲苯",
+   "en": "toluene",
+   "smiles": "Cc1ccccc1"
+  },
+  {
+   "key": "ZAQJHHRNXZUBTE-UHFFFAOYSA-N",
+   "zh": "果糖",
+   "en": "fructose",
+   "smiles": "O=C(CO)C(O)C(O)CO"
+  },
+  {
+   "key": "ZMANZCXQSJIPKH-UHFFFAOYSA-N",
+   "zh": "三乙胺",
+   "en": "triethylamine",
+   "smiles": "CCN(CC)CC"
+  },
+  {
+   "key": "ZWEHNKRNPOVVGH-UHFFFAOYSA-N",
+   "zh": "丁酮",
+   "en": "butan-2-one",
+   "smiles": "CCC(C)=O"
+  }
+ ]
+}

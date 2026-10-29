@@ -1,4 +1,4 @@
-﻿# 发布到 GitHub + npm，并让 DSH 能搜到
+# 发布到 GitHub + npm，并让 DSH 能搜到
 
 这份文档把「本地能用的插件」变成「别人能在 DSH 里搜到、点一下装上的插件」。
 全程在 Windows PowerShell 里执行，命令都验证过。

@@ -1,0 +1,332 @@
+"""Data-driven component modifiers attached after parent numbering."""
+
+from .assembly_parts import AssemblyParts, NameTokenBinding, SubstituentItem, split_rendered_substituent_name
+from .chalcogen_roles import Chalcogen, ChalcogenLigandRole
+from .formatting import format_multiplier, is_complex_prefix, strip_outer_parentheses
+from .group_atom_roles import ester_or_peroxy_single_oxygen
+from .locants import parse_locant
+from .molecule import DecisionTrace, Molecule, bond_ids_within, charged_atoms
+from .naming_protocols import RecursiveSubgraphNamer
+from .nomenclature import RULES, FunctionalGroupCapability
+from .perception import PerceivedGroup
+from .subgraph_tools import subgraph_component
+from .substituent_tokens import graph_bound_substituent_tokens
+from .trace_helpers import add_substituent_trace, decision_trace_data
+
+
+def add_component_front_modifiers(
+    mol: Molecule,
+    parts: AssemblyParts,
+    perceived_groups: list[PerceivedGroup],
+    principal_key: str | None,
+    sub_exclude: set[int],
+    branch_namer: RecursiveSubgraphNamer,
+    get_loc=None,
+    *,
+    include_trace: bool = False,
+) -> None:
+    """Add ester/sulfonate front modifiers such as the alcohol component name."""
+
+    principal_group = next((group for group in perceived_groups if group.key == principal_key), None)
+    if principal_group is None or principal_group.resolved_rule is None:
+        return
+    if not principal_group.resolved_rule.has_capability(FunctionalGroupCapability.FRONT_MODIFIER):
+        return
+    for group in perceived_groups:
+        if group.key != principal_key:
+            continue
+        single_o = ester_or_peroxy_single_oxygen(mol, group)
+        if single_o is None:
+            continue
+        r_group_c = next((n for n in mol.get_neighbors(single_o) if n not in group.atoms_involved), None)
+        if r_group_c is None:
+            continue
+        branch_exclude = sub_exclude | {single_o}
+        if include_trace:
+            branch_decisions = DecisionTrace()
+            branch_name, branch_trace, branch_tree = branch_namer(
+                mol,
+                r_group_c,
+                branch_exclude,
+                upstream_atom=single_o,
+                return_trace=True,
+                return_tree=True,
+                decision_trace=branch_decisions,
+            )
+        else:
+            branch_name = branch_namer(mol, r_group_c, branch_exclude, upstream_atom=single_o)
+        if branch_name:
+            modifier_atoms = subgraph_component(mol, r_group_c, sub_exclude | {single_o})
+            modifier = strip_outer_parentheses(branch_name)
+            if group.descriptor is not None:
+                linkers = group.descriptor.ligands_with_role(ChalcogenLigandRole.CARBON_LINK)
+                double_ligands = group.descriptor.ligands_with_role(ChalcogenLigandRole.DOUBLE_BONDED)
+                if (
+                    linkers
+                    and double_ligands
+                    and any(ligand.element is not Chalcogen.OXYGEN for ligand in group.descriptor.ligands)
+                ):
+                    ordered_linkers = tuple(
+                        ligand
+                        for ligand in group.descriptor.ligands
+                        if ligand.role is not ChalcogenLigandRole.DOUBLE_BONDED
+                    )
+                    element_locant = "".join(ligand.element.value for ligand in ordered_linkers)
+                    if is_complex_prefix(modifier):
+                        modifier = format_multiplier(modifier, 1)
+                    modifier = f"{element_locant}-{modifier}"
+            parts.front_modifiers.append(modifier)
+            locant = str(get_loc(group.attachment_carbon)) if get_loc is not None else None
+            parts.front_modifier_locants.append(locant)
+            parts.front_modifier_atom_ids.update(modifier_atoms)
+            parts.front_modifier_charge_atom_ids.update(charged_atoms(mol, modifier_atoms))
+            if include_trace:
+                parts.front_modifier_items.append(
+                    SubstituentItem(
+                        name=modifier,
+                        locants=[locant] if locant is not None else [],
+                        atom_ids=modifier_atoms,
+                        bond_ids=bond_ids_within(mol, modifier_atoms),
+                        charge_atom_ids=charged_atoms(mol, modifier_atoms),
+                        trace_segments=branch_trace,
+                        nested_decisions=decision_trace_data(branch_decisions),
+                        substituent_tree=branch_tree,
+                    )
+                )
+
+
+def n_substituent_locant(
+    principal_key: str,
+    principal_group_count: int,
+    nitrogen_count: int,
+    nitrogen_index: int,
+    global_index: int,
+    group_index: int = 0,
+) -> str:
+    """Return the N/N' locant prefix for a principal-group nitrogen."""
+
+    if principal_key == "hydrazine":
+        return "N" if nitrogen_index == 0 else "N'"
+    if principal_key in {"amidine", "ring_amidine"} and principal_group_count > 1:
+        return "N" + "'" * (nitrogen_index * principal_group_count + group_index)
+    if principal_key in RULES.functional_groups.keys_with_family("hydrazone"):
+        # Only the terminal nitrogen of a hydrazone takes substituents, so the
+        # prime distinguishes one hydrazone from the next rather than one
+        # nitrogen from the next: a dihydrazone carrying a group on each is
+        # ``N,N'``, while two groups on a single hydrazone are both ``N``.
+        return "N" + "'" * group_index
+    if principal_group_count == 1 and nitrogen_count == 1:
+        return "N"
+    return "N" + "'" * global_index
+
+
+def add_component_n_substituents(
+    mol: Molecule,
+    parts: AssemblyParts,
+    perceived_groups: list[PerceivedGroup],
+    principal_key: str | None,
+    numbered_path: list[int],
+    get_loc,
+    sub_exclude: set[int],
+    branch_namer: RecursiveSubgraphNamer,
+) -> None:
+    """Add N-substituent prefixes and N/N' locants for principal groups."""
+
+    if principal_key is None:
+        return
+    principal_groups = [g for g in perceived_groups if g.key == principal_key and g.attachment_carbon in numbered_path]
+    principal_groups.sort(key=lambda g: parse_locant(get_loc(g.attachment_carbon)))
+
+    n_idx_global = 0
+    for group_index, group in enumerate(principal_groups):
+        c_idx = group.attachment_carbon
+        group_rule = group.resolved_rule or RULES.functional_groups.get(group.key)
+        nitrogens = [n for n in group.atoms_involved if mol.atoms[n].symbol == "N"]
+        nitrogens.sort(key=lambda n: mol.get_bond(n, c_idx) is not None, reverse=True)
+        if group_rule.has_capability(FunctionalGroupCapability.UREA):
+            # The two urea nitrogens are equivalent: P-31.1.4 gives the unprimed locant to
+            # the substituent cited first, and an unsubstituted nitrogen takes no locant.
+            nitrogens.sort(key=lambda n: _nitrogen_alphabetical_rank(mol, n, c_idx, sub_exclude, branch_namer))
+        guanidine_locants: dict[int, str] = {}
+        # The amidine carbon itself (for a ring amidine the attachment is the ring atom).
+        core_c = next(
+            (
+                a
+                for a in group.atoms_involved
+                if mol.atoms[a].is_carbon and any(mol.get_bond(a, n) is not None for n in nitrogens)
+            ),
+            c_idx,
+        )
+        if principal_key in {"amidine", "ring_amidine"}:
+            # P-66.4.1.1.1.3: the amine nitrogen is N, the imino nitrogen N'.
+            nitrogens.sort(key=lambda n: mol.get_bond(n, core_c).order)
+        elif group_rule.has_capability(FunctionalGroupCapability.HYDRAZIDE):
+            # P-66.3.1.2: the acyl-bound nitrogen is N, the terminal one N'.
+            functional_centers = group.descriptor.centers if group.descriptor is not None else (core_c,)
+            nitrogens.sort(key=lambda n: not any(mol.get_bond(n, center) is not None for center in functional_centers))
+        elif principal_key == "guanidine":
+            # P-66.4.1.2.1.3: guanidine is numbered 1,2,3 with the imino nitrogen at 2; the amine
+            # nitrogen whose substituent is cited first takes 1.
+            imino = next(n for n in nitrogens if mol.get_bond(n, core_c).order == 2)
+            amines = sorted(
+                (n for n in nitrogens if n != imino),
+                key=lambda n: _nitrogen_alphabetical_rank(mol, n, core_c, sub_exclude, branch_namer),
+            )
+            guanidine_locants = {amines[0]: "1", imino: "2", amines[1]: "3"}
+        for n_idx_local, single_n in enumerate(nitrogens):
+            n_substituents = [
+                n
+                for n in mol.get_neighbors(single_n)
+                if n != c_idx
+                and n not in group.atoms_involved
+                and mol.atoms[n].symbol != "H"
+                and not _is_principal_hydrazone_carbon(mol, principal_key, single_n, n)
+            ]
+            if not n_substituents:
+                n_idx_global += 1
+                continue
+
+            loc_prefix = guanidine_locants.get(single_n) or n_substituent_locant(
+                principal_key, len(principal_groups), len(nitrogens), n_idx_local, n_idx_global, group_index
+            )
+            for n_sub in n_substituents:
+                branch_decisions = DecisionTrace()
+                branch_name, branch_trace, branch_tree = _nitrogen_substituent_name(
+                    mol, single_n, n_sub, sub_exclude, branch_namer, branch_decisions
+                )
+                if branch_name:
+                    branch_exclude = sub_exclude | {single_n}
+                    branch_atoms = subgraph_component(mol, n_sub, branch_exclude)
+                    nested_decisions = decision_trace_data(branch_decisions)
+                    emitted_tokens = graph_bound_substituent_tokens(
+                        mol,
+                        n_sub,
+                        branch_atoms,
+                        branch_name,
+                        single_n,
+                        branch_exclude,
+                        branch_namer,
+                    )
+                    emitted_tokens = _with_n_substituent_locant_token(
+                        emitted_tokens,
+                        loc_prefix,
+                        single_n,
+                        bond_ids_within(mol, {single_n, n_sub}),
+                    )
+                    if _use_hydrazone_suffix_modifier(parts, principal_key):
+                        branch_text, outer_parentheses_optional = split_rendered_substituent_name(branch_name)
+                        parts.principal_suffix_modifiers.append(
+                            SubstituentItem(
+                                branch_text,
+                                [],
+                                outer_parentheses_optional=outer_parentheses_optional,
+                                atom_ids=branch_atoms,
+                                bond_ids=bond_ids_within(mol, branch_atoms | {single_n}),
+                                charge_atom_ids=charged_atoms(mol, branch_atoms),
+                                emitted_tokens=emitted_tokens,
+                                trace_segments=branch_trace,
+                                nested_decisions=nested_decisions,
+                                substituent_tree=branch_tree,
+                            )
+                        )
+                        continue
+                    add_substituent_trace(
+                        parts,
+                        branch_name,
+                        loc_prefix,
+                        branch_atoms,
+                        bond_ids_within(mol, branch_atoms | {single_n}),
+                        charged_atoms(mol, branch_atoms),
+                        branch_trace,
+                        nested_decisions,
+                        emitted_tokens,
+                        substituent_tree=branch_tree,
+                    )
+            n_idx_global += 1
+
+
+def _with_n_substituent_locant_token(
+    emitted_tokens: tuple[NameTokenBinding, ...],
+    locant: str,
+    nitrogen_atom: int,
+    branch_bonds: set[int],
+) -> tuple[NameTokenBinding, ...]:
+    """Bind N-substituent locants to the principal nitrogen atom."""
+
+    locant_token = NameTokenBinding(
+        text=locant,
+        token_kind="locant",
+        source="n_substituent_locant",
+        grammar_role="n_substituent",
+        binding_key="prefix:n_substituent_locant",
+        atom_ids={nitrogen_atom},
+        bond_ids=set(branch_bonds),
+        locants=(locant,),
+    )
+    return (
+        locant_token,
+        *tuple(token for token in emitted_tokens if not (token.token_kind == "locant" and token.text == locant)),
+    )
+
+
+def _nitrogen_substituent_name(
+    mol: Molecule,
+    nitrogen: int,
+    substituent: int,
+    sub_exclude: set[int],
+    branch_namer: RecursiveSubgraphNamer,
+    decision_trace: DecisionTrace | None = None,
+) -> tuple[str, list, dict | None]:
+    """Render graph-bound N-substituents on principal nitrogen groups."""
+
+    bond = mol.get_bond(nitrogen, substituent)
+    if (
+        bond is not None
+        and bond.order == 2
+        and mol.atoms[substituent].symbol == "N"
+        and not [n for n in mol.get_neighbors(substituent) if n != nitrogen and mol.atoms[n].symbol != "H"]
+    ):
+        return "imino", [], None
+    return branch_namer(
+        mol,
+        substituent,
+        sub_exclude | {nitrogen},
+        upstream_atom=nitrogen,
+        return_trace=True,
+        return_tree=True,
+        decision_trace=decision_trace,
+    )
+
+
+def _use_hydrazone_suffix_modifier(parts: AssemblyParts, principal_key: str | None) -> bool:
+    """Avoid ambiguous N-prefixes when a hydrazone parent already has ring N atoms."""
+
+    if principal_key not in RULES.functional_groups.keys_with_family("hydrazone"):
+        return False
+    return any(symbol == "N" for symbol in parts.parent_atom_symbols_by_locant.values())
+
+
+def _is_principal_hydrazone_carbon(mol: Molecule, principal_key: str | None, nitrogen: int, neighbor: int) -> bool:
+    if principal_key not in RULES.functional_groups.keys_with_family("hydrazone"):
+        return False
+    if not mol.atoms[neighbor].is_carbon:
+        return False
+    bond = mol.get_bond(nitrogen, neighbor)
+    return bond is not None and bond.order == 2
+
+
+def _nitrogen_alphabetical_rank(
+    mol: Molecule, nitrogen: int, carbon: int, sub_exclude: set[int], branch_namer: RecursiveSubgraphNamer
+) -> tuple[int, str]:
+    from .assembly_prefixes import substituent_sort_key
+
+    names = []
+    for neighbor in mol.get_neighbors(nitrogen):
+        if neighbor == carbon or mol.atoms[neighbor].symbol == "H":
+            continue
+        name, _, _ = _nitrogen_substituent_name(mol, nitrogen, neighbor, sub_exclude, branch_namer, DecisionTrace())
+        if name:
+            names.append(substituent_sort_key(str(name)))
+    if not names:
+        return (1, "", 0)
+    return (0, min(names), -len(names))

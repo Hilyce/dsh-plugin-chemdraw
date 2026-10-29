@@ -264,7 +264,29 @@ function makeRoutes(render) {
       (e) => sendJson(res, 400, { error: String(e.message || e) }))
   }
 
-  return { single, reaction, batch }
+  const identify = async (req, res) => {
+    let body
+    try {
+      body = await readJson(req, 512 * 1024)
+    } catch (err) {
+      return sendJson(res, 400, { error: String(err.message || err) })
+    }
+    const molblock = typeof body.molblock === 'string' ? body.molblock.trim() : ''
+    const smiles = typeof body.smiles === 'string' ? body.smiles.trim() : ''
+    if (!molblock && !smiles) return sendJson(res, 400, { error: '缺少 molblock 或 smiles' })
+    if (molblock.length > 200000 || smiles.length > 4000) {
+      return sendJson(res, 413, { error: '输入过长' })
+    }
+    try {
+      const r = await render({ op: 'identify', molblock: molblock || undefined, smiles: smiles || undefined })
+      sendJson(res, 200, r)
+    } catch (err) {
+      // 结构不合法属于“正常回答”，用 200 + ok:false 交给客户端展示
+      sendJson(res, 200, { ok: false, error: String(err.message || err) })
+    }
+  }
+
+  return { single, reaction, batch, identify }
 }
 
 /* ------------------------------------------------------------------- 插件 */
@@ -290,6 +312,12 @@ export function apply(ctx, config = {}) {
     path: '/chemdraw/batch',
     handler: (req, res) => (req.method === 'POST' ? routes.batch(req, res) : sendJson(res, 405, { error: 'POST only' })),
   }), 'dsh-chemdraw: batch route')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/chemdraw/identify',
+    handler: (req, res) => (req.method === 'POST' ? routes.identify(req, res) : sendJson(res, 405, { error: 'POST only' })),
+  }), 'dsh-chemdraw: identify route')
 
   /* -------------------------------------------------------------- 工具 1 */
 

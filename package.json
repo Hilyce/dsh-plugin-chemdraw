@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-chemdraw",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Draws skeletal chemical structures from SMILES inside DeepSeek Harness: transparent PNG/SVG, uniform bond lengths, reaction schemes, batch export. Bundles an offline RDKit runtime.",
   "type": "module",
   "main": "index.js",
@@ -17,6 +17,8 @@
     "worker.py",
     "render.py",
     "scheme.py",
+    "identify.py",
+    "data/common-names.json",
     "cordis.patch.yml",
     "icon.svg",
     "locale/*.json",
@@ -66,3 +68,4 @@
     "market:owner": "node scripts/set-owner.mjs"
   }
 }
+

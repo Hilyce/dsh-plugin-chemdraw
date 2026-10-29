@@ -1,0 +1,176 @@
+"""Name-fragment formatting helpers used by the naming pipeline."""
+
+from collections.abc import Callable
+
+from .assembly_parts import RenderedSubstituentName, rendered_substituent_text
+from .assembly_utils import is_fully_enclosed as is_fully_enclosed
+from .namer_config import ALKYL_OXY_PREFIXES
+from .rules import multipliers, stems
+
+
+def strip_outer_parentheses(name: str | RenderedSubstituentName) -> str:
+    """Remove one balanced outer parenthesis pair from a fragment."""
+
+    name = rendered_substituent_text(name)
+    if name.startswith("(") and name.endswith(")"):
+        return name[1:-1]
+    return name
+
+
+def is_complex_prefix(name: str) -> bool:
+    """Return true when a substituent prefix needs protective parentheses."""
+
+    return "(" in name or name[0].isdigit() or "-" in name or " " in name or _starts_with_multiplier(name)
+
+
+def is_composite_prefix(name: str) -> bool:
+    """Return true when a prefix is built from more than one substituent unit.
+
+    ``cyclopropylmethyl`` is a cyclopropyl *on* a methyl.  Written bare in front
+    of a parent it reads equally well as a ``cyclopropyl`` plus a ``methyl`` on
+    that parent — two different structures — so it needs protective parentheses.
+    A simple prefix carries its only ``yl`` at the end and needs none.
+    """
+
+    for ending in ("ylidyne", "ylidene", "yl"):
+        if name.endswith(ending):
+            return "yl" in name[: -len(ending)]
+    return "yl" in name
+
+
+def _starts_with_multiplier(name: str) -> bool:
+    """Return true when a prefix already begins with a multiplicative prefix."""
+
+    return any(name.startswith(mult.basic) for mult in multipliers.MULTIPLIERS.values())
+
+
+def format_multiplier(name: str, count: int, safe_enclose: bool = False) -> str:
+    """Apply simple or complex multiplicative prefixes to a substituent name."""
+
+    is_complex = is_complex_prefix(name) or (count > 1 and needs_complex_multiplier(name))
+    if count == 1:
+        if (safe_enclose or is_complex) and not is_fully_enclosed(name):
+            return f"({name})"
+        return name
+    mult = multipliers.complex_(count) if is_complex else multipliers.basic(count)
+    if is_complex and not is_fully_enclosed(name):
+        return f"{mult}({name})"
+    return f"{mult}{name}"
+
+
+def needs_complex_multiplier(name: str) -> bool:
+    """Keep repeated compound ligands distinct from chains such as disulfanyl."""
+
+    return (
+        is_composite_prefix(name)
+        or (name.endswith("yl") and "oxy" in name)
+        or name in {"sulfanyl", "selanyl", "tellanyl", "phosphanyl", "arsanyl"}
+    )
+
+
+def count_names(names: list[str]) -> dict[str, int]:
+    """Count repeated substituent fragments before multiplier formatting."""
+
+    counts = {}
+    for name in names:
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def format_counted_prefixes(names: list[str]) -> str:
+    """Format repeated substituent fragments with correct multipliers."""
+
+    counts = count_names(names)
+    safe = len(counts) > 1 or any(is_complex_prefix(name) for name in counts)
+    return "".join(format_multiplier(name, count, safe_enclose=safe) for name, count in sorted(counts.items()))
+
+
+def format_center_ligands(names: list[str], *, sort_key: Callable[[str], str] | None = None) -> str:
+    """Format ligands cited on one central atom.
+
+    The first ligand establishes the ligand list and is written normally;
+    subsequent distinct ligands are parenthesised to keep them attached to the
+    same centre.  Repeated ligands remain a single multiplied word and do not
+    need another enclosure.  A preceding singleton is enclosed when it ends
+    with that repeated ligand, preventing e.g. ``chlorofluoromethyl`` plus
+    ``trimethyl`` from merging ambiguously.  Otherwise, ``ethyl`` + ``hydroxy``
+    becomes ``ethyl(hydroxy)``, while ``methoxy`` + two ``methyl`` ligands
+    becomes ``methoxydimethyl``.
+    """
+
+    rendered = []
+    counts = count_names(names)
+    ordered_names = sorted(counts, key=sort_key)
+    for index, name in enumerate(ordered_names):
+        count = counts[name]
+        if count > 1 and _is_substituted_alkyl_ligand(name) and not is_fully_enclosed(name):
+            ligand = f"{multipliers.complex_(count)}({name})"
+        else:
+            ligand = format_multiplier(name, count)
+        merges_with_multiplied_ligand = count == 1 and any(
+            counts[later_name] > 1 and name.endswith(later_name) for later_name in ordered_names[index + 1 :]
+        )
+        if merges_with_multiplied_ligand and not is_fully_enclosed(ligand):
+            ligand = f"({ligand})"
+        if index and count == 1 and not is_fully_enclosed(ligand):
+            ligand = f"({ligand})"
+        rendered.append(ligand)
+    return "".join(rendered)
+
+
+def _is_substituted_alkyl_ligand(name: str) -> bool:
+    """Return whether a bare ligand contains modifiers before its alkyl root.
+
+    Such ligands require complex multipliers: two ``chloromethyl`` groups are
+    ``bis(chloromethyl)``, because ``dichloromethyl`` denotes one differently
+    substituted methyl group.  Unsubstituted acyclic and cycloalkyl ligands
+    retain compact basic multipliers.
+    """
+
+    stem = stems.terminal_stem(name)
+    if stem is None:
+        return False
+    simple_name = f"{stem.stem}yl"
+    return name not in {simple_name, f"cyclo{simple_name}"}
+
+
+def oxy_prefix_from_branch(branch: str) -> str:
+    """Return an oxy prefix for a named branch."""
+
+    retained = ALKYL_OXY_PREFIXES.get(branch)
+    if retained:
+        return retained
+    branch = strip_outer_parentheses(branch)
+    retained = ALKYL_OXY_PREFIXES.get(branch)
+    if retained:
+        return retained
+    substituted_alkoxy = substituted_alkoxy_prefix(branch)
+    if substituted_alkoxy:
+        return substituted_alkoxy
+    if is_complex_prefix(branch):
+        return f"(({branch})oxy)"
+    return f"({branch}oxy)"
+
+
+def substituted_alkoxy_prefix(branch: str) -> str | None:
+    """Contract substituted acyclic alkyl branches to alkoxy prefixes."""
+
+    if "hydroxy" not in branch:
+        return None
+    stem = stems.terminal_stem(branch)
+    if stem is None:
+        return None
+    terminal = f"{stem.stem}yl"
+    replacement = f"{stem.stem}oxy"
+    prefix = branch[: -len(terminal)]
+    return f"({prefix}{replacement})" if prefix else replacement
+
+
+def format_element_substituent(stereo_prefix: str, branch: str, suffix: str, is_double: bool = False) -> str:
+    """Attach a named branch to an element substituent suffix."""
+
+    branch = strip_outer_parentheses(branch)
+    suffix_text = suffix + ("idene" if is_double else "")
+    if is_complex_prefix(branch):
+        return f"({stereo_prefix}({branch}){suffix_text})"
+    return f"({stereo_prefix}{branch}{suffix_text})"

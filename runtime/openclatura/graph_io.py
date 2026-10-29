@@ -1,0 +1,256 @@
+"""SMILES input and graph component helpers."""
+
+from rdkit import Chem
+
+from .molecule import Molecule
+
+# When True, ``_build_molecule`` also computes independent modern-CIP labels for
+# the self-audit.  Toggled on only for the duration of an audited naming run
+# (see ``openclatura.audit.self_audit.capture_component_audits``) so that
+# ordinary naming pays no extra CIP-perception cost.
+_AUDIT_CIP_ENABLED = False
+
+
+def set_audit_cip_enabled(enabled: bool) -> None:
+    global _AUDIT_CIP_ENABLED
+    _AUDIT_CIP_ENABLED = enabled
+
+
+def _modern_cip_labels(rdmol: Chem.Mol) -> tuple[dict[int, str], dict[tuple[int, int], str]]:
+    """Independent CIP labels from RDKit's modern ``rdCIPLabeler`` (the accurate
+    implementation): a map of atom index → R/S label and a map of
+    frozenset-like ``(u, v)`` atom-pair → E/Z label.  Independent of the legacy
+    perception the namer emits, so it can adjudicate emitted descriptors."""
+
+    has_atom_stereo = any(a.GetChiralTag() != Chem.rdchem.ChiralType.CHI_UNSPECIFIED for a in rdmol.GetAtoms())
+    has_bond_stereo = any(b.GetStereo() != Chem.rdchem.BondStereo.STEREONONE for b in rdmol.GetBonds())
+    if not (has_atom_stereo or has_bond_stereo):
+        return {}, {}
+    try:
+        from rdkit.Chem import rdCIPLabeler
+
+        work = Chem.Mol(rdmol)
+        rdCIPLabeler.AssignCIPLabels(work)
+    except Exception:
+        return {}, {}
+    atom_labels: dict[int, str] = {}
+    for atom in work.GetAtoms():
+        if atom.HasProp("_CIPCode"):
+            atom_labels[atom.GetIdx()] = atom.GetProp("_CIPCode")
+    bond_labels: dict[tuple[int, int], str] = {}
+    for bond in work.GetBonds():
+        if bond.HasProp("_CIPCode"):
+            key = (bond.GetBeginAtomIdx(), bond.GetEndAtomIdx())
+            bond_labels[(min(key), max(key))] = bond.GetProp("_CIPCode")
+    return atom_labels, bond_labels
+
+
+def read_smiles(smiles: str) -> Molecule:
+    """Parse a SMILES string into the internal graph model."""
+
+    rdmol = Chem.MolFromSmiles(smiles)
+    atom_metadata = None
+    if rdmol is None:
+        # Sanitization failed (an unusual valence, for example); read the
+        # graph as written.
+        rdmol = Chem.MolFromSmiles(smiles, sanitize=False)
+        if rdmol:
+            rdmol.UpdatePropertyCache(strict=False)
+            Chem.FastFindRings(rdmol)
+            atom_metadata = _atom_metadata(rdmol)
+            _kekulize(rdmol)
+    else:
+        atom_metadata = _atom_metadata(rdmol)
+        try:
+            Chem.Kekulize(rdmol, clearAromaticFlags=True)
+        except Exception:
+            pass
+
+    return _build_molecule(rdmol, atom_metadata)
+
+
+def read_rdkit_mol(rdmol: Chem.Mol | None, *, copy: bool = True) -> Molecule:
+    """Convert an existing RDKit molecule into the internal graph model.
+
+    Naming needs a kekulized graph, so the input is copied by default and the
+    caller's molecule is left untouched.  Pass ``copy=False`` only when the
+    molecule is a throwaway.  Molecules that were never sanitized (for example
+    ``MolFromSmiles(..., sanitize=False)`` or a partially read SD record) get
+    the minimal property-cache and ring perception the namer relies on.
+
+    Explicit hydrogens, as SD records usually carry them, are folded back into
+    implicit hydrogen counts; that renumbers the heavy atoms of such a
+    molecule, so atom indices in a trace refer to the hydrogen-suppressed
+    graph rather than to the input molecule.
+    """
+
+    if rdmol is None:
+        return Molecule()
+    if copy:
+        rdmol = Chem.Mol(rdmol)
+
+    _ensure_perception(rdmol)
+    if any(atom.GetAtomicNum() == 1 for atom in rdmol.GetAtoms()):
+        try:
+            rdmol = Chem.RemoveHs(rdmol, sanitize=False)
+            _ensure_perception(rdmol)
+        except Exception:
+            pass
+
+    atom_metadata = _atom_metadata(rdmol)
+    _kekulize(rdmol)
+
+    return _build_molecule(rdmol, atom_metadata)
+
+
+def _kekulize(rdmol: Chem.Mol) -> None:
+    """Kekulize in place, refusing aromatic rings that have no Kekule structure.
+
+    An aromatic bond left in the graph is read as a single bond, so naming such
+    a ring would silently name its saturated analogue (``c1ccnc1`` as
+    pyrrolidine).
+    """
+
+    try:
+        Chem.Kekulize(rdmol, clearAromaticFlags=True)
+    except Chem.KekulizeException as exc:
+        raise ValueError(f"aromatic system has no Kekule structure ({exc})") from exc
+
+
+def _ensure_perception(rdmol: Chem.Mol) -> None:
+    """Give an externally supplied molecule the valence and ring data we need."""
+
+    try:
+        rdmol.UpdatePropertyCache(strict=False)
+    except Exception:
+        pass
+    try:
+        rdmol.GetRingInfo().NumRings()
+    except RuntimeError:
+        Chem.FastFindRings(rdmol)
+
+
+def _build_molecule(rdmol: Chem.Mol | None, atom_metadata: dict | None) -> Molecule:
+    """Populate the internal graph model from a prepared RDKit molecule."""
+
+    mol = Molecule()
+    if rdmol is None:
+        return mol
+    if atom_metadata is None:
+        atom_metadata = _atom_metadata(rdmol)
+
+    Chem.AssignStereochemistry(rdmol, force=True, cleanIt=True)
+    chiral_centers = dict(Chem.FindMolChiralCenters(rdmol, includeUnassigned=False))
+    mol.legacy_cip = dict(chiral_centers)
+    # Which atoms *are* assigned stereocentres comes from RDKit's legacy
+    # perception, because the namer's choice between per-atom descriptors and a
+    # relative ``cis``/``trans`` word keys off that set.  What each centre is
+    # *called* comes from the modern ``rdCIPLabeler``, the accurate implementation
+    # of the CIP rules: legacy mislabels fused and small-ring centres, and never
+    # emits the lowercase ``r``/``s`` that pseudo-asymmetric centres require.
+    # Correcting the label without touching the set fixes the descriptors while
+    # leaving the naming decisions that depend on the set alone.
+    modern_cip, modern_bond_cip = _modern_cip_labels(rdmol)
+    mol.accurate_cip = dict(modern_cip)
+    if _AUDIT_CIP_ENABLED:
+        # Relative ring stereo (``cis``/``trans``) is carried by tetrahedral
+        # parities, which the flattened graph model does not retain.  Keeping the
+        # source molecule — atom indices line up with ``mol.atoms`` — lets the
+        # audit read those parities straight off the input.  Audit-only, so it is
+        # gated with the rest of the audit overhead.
+        mol.audit_rdmol = Chem.Mol(rdmol)
+
+    for atom in rdmol.GetAtoms():
+        stereo = chiral_centers.get(atom.GetIdx())
+        if stereo is not None:
+            accurate = modern_cip.get(atom.GetIdx())
+            if accurate is not None:
+                stereo = accurate
+            elif atom.GetSymbol() == "S" and atom.GetTotalDegree() == 3:
+                # No accurate label to defer to, so keep the namer's long-standing
+                # convention for 3-coordinate sulfur.
+                stereo = "R" if stereo == "S" else "S"
+        raw_stereo = _raw_tetrahedral_stereo(atom) if not stereo else None
+        mol.add_atom(
+            symbol=atom.GetSymbol(),
+            idx=atom.GetIdx(),
+            charge=atom.GetFormalCharge(),
+            # Isotopic labels are not expressed by the namer; recording them lets
+            # the self-audit abstain instead of confirming a name that silently
+            # dropped the label.
+            isotope=atom.GetIsotope() or None,
+            stereo=stereo,
+            raw_stereo=raw_stereo,
+            # The audit's comparison field stays audit-gated: it is what the
+            # emitted descriptor is adjudicated against, and populating it outside
+            # an audit would only be dead weight.
+            cip=modern_cip.get(atom.GetIdx()) if _AUDIT_CIP_ENABLED else None,
+            is_aromatic=atom_metadata[atom.GetIdx()]["is_aromatic"],
+            explicit_h_count=atom_metadata[atom.GetIdx()]["explicit_h_count"],
+            total_h_count=atom_metadata[atom.GetIdx()]["total_h_count"],
+            radical_electrons=atom.GetNumRadicalElectrons(),
+        )
+
+    for bond in rdmol.GetBonds():
+        stereo = None
+        st = bond.GetStereo()
+        if st == Chem.rdchem.BondStereo.STEREOE:
+            stereo = "E"
+        elif st == Chem.rdchem.BondStereo.STEREOZ:
+            stereo = "Z"
+
+        in_small_ring = any(bond.IsInRingSize(i) for i in range(3, 8))
+
+        u, v = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+        mol.add_bond(
+            u=u,
+            v=v,
+            order=int(bond.GetBondTypeAsDouble()),
+            stereo=stereo,
+            in_small_ring=in_small_ring,
+            cip=modern_bond_cip.get((min(u, v), max(u, v))) if _AUDIT_CIP_ENABLED else None,
+        )
+    return mol
+
+
+def _raw_tetrahedral_stereo(atom: Chem.Atom) -> str | None:
+    """Return raw tetrahedral chirality tags that do not have CIP assignment."""
+
+    tag = atom.GetChiralTag()
+    if tag == Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CW:
+        return "CW"
+    if tag == Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CCW:
+        return "CCW"
+    return None
+
+
+def _atom_metadata(rdmol: Chem.Mol) -> dict[int, dict[str, int | bool]]:
+    """Return atom metadata that may be lost when RDKit kekulizes a molecule."""
+
+    return {
+        atom.GetIdx(): {
+            "is_aromatic": atom.GetIsAromatic(),
+            "explicit_h_count": atom.GetNumExplicitHs(),
+            "total_h_count": atom.GetTotalNumHs(),
+        }
+        for atom in rdmol.GetAtoms()
+    }
+
+
+def get_connected_components(mol: Molecule) -> list[set[int]]:
+    """Split a molecule graph into disconnected naming components."""
+
+    visited = set()
+    components = []
+    for atom in mol:
+        if atom.idx not in visited:
+            comp = set()
+            q = [atom.idx]
+            while q:
+                curr = q.pop(0)
+                if curr not in visited:
+                    visited.add(curr)
+                    comp.add(curr)
+                    q.extend(mol.get_neighbors(curr))
+            components.append(comp)
+    return components

@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import render  # noqa: E402
 import scheme as schemes  # noqa: E402
+import identify as identify_mod  # noqa: E402
 
 
 def _bool(v) -> bool:
@@ -61,6 +62,12 @@ def handle(req: dict) -> dict:
                                   annotate=opts["annotate"], reagents=reagents)
         return {"ok": True, "format": "png",
                 "data": base64.b64encode(buf.getvalue()).decode("ascii")}
+
+    if op == "identify":
+        return identify_mod.identify(
+            molblock=(req.get("molblock") or "").strip() or None,
+            smiles=(req.get("smiles") or "").strip() or None,
+        )
 
     if op == "batch":
         out_dir = (req.get("outDir") or "").strip()

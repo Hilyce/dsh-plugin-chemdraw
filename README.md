@@ -50,15 +50,44 @@ https://Hilyce.github.io/dsh-plugin-chemdraw/market/index.json
 
 ### 1. 右侧栏面板
 
-侧栏「+」→ **结构式**，三种模式：
+侧栏「+」→ **结构式**，四种模式：
 
 | 模式 | 输入 | 用途 |
 |---|---|---|
 | **单分子** | 每行一个 SMILES | 逐张预览；**复制 PNG** 后直接在 Word 里 Ctrl+V，或下载 PNG/SVG |
 | **反应式** | `底物.底物>>产物.产物`，可填箭头条件 | 自动排版箭头与「+」，各组分同尺度 |
 | **批量** | 每行一个 SMILES + 输出目录 | 导出成文件夹，附带 `index.html` 预览页 |
+| **手绘** | 鼠标/触屏直接画 | 没有 SMILES 也能画：点碳、拖碳链、拖苯环和 N/O 上去 |
 
 PNG 是 4 倍超采样后从矢量重绘的，粘进 Word 或放大看都不糊。
+
+#### 手绘模式怎么用
+
+- **放一个碳**：点工具条「碳」→ 点画板空白处（孤立碳显示 `CH₄`）；
+- **画碳链**：按住已有原子往空白处拖，一次拖动就会沿 30° 网格长出一串锯齿碳链；拖回已有原子则闭环；
+- **换元素**：左边模板点 `N` / `O` / `S` / `P` / `F` / `Cl` / `Br` / `I` / `OH` / `NH₂` / `CH₃`，再点已有原子；
+- **苯环**：模板里的「苯环」拖到画板（或点一下再点画板），自动补交替双键；
+- **键级**：单 / 双 / 三键作用于新画的键；环里的双键自动画在内侧；
+- **擦除 / 撤销 / 重做 / 清空**：底部有按钮，画板右上角还有一个悬浮「清空」，一键清空并收起识别卡（可撤销）；
+- **导出**：复制 PNG / 下载 PNG / 下载 SVG，透明底、按内容紧裁，和 SMILES 渲染出来的图同样能直接进 Word。
+
+手绘的结果保存在面板里，切到别的模式再切回来不会丢。
+
+#### 画完自动命名（IUPAC + 常用名）
+
+画板下方会自动出现一张识别卡，改一笔就更新一次：
+
+| 字段 | 来源 |
+|---|---|
+| **IUPAC 系统名** | [openclatura](https://github.com/lamalab-org/openclatura)，离线、按 IUPAC 蓝皮书规则确定性生成，不联网、不是模型猜的 |
+| **常用名** | 内置 93 个常见化合物（中英对照，如「甲烷 · methane」「对甲酚 · p-cresol」），按 InChIKey 精确匹配，退化时按骨架匹配并标注 |
+| **分子式 / 分子量** | RDKit 计算 |
+| **规范 SMILES** | 一键复制，可接着回「单分子」模式继续用 |
+
+点了「重新渲染」会用 Host 的 RDKit 把结构重画一遍（和「单分子」模式完全同款：键长统一、透明底、紧裁边），
+再复制 PNG / 下载 PNG / SVG。手绘时的坐标只决定连接关系，最终出图由 RDKit 重新排版。
+
+结构画错了（比如碳连了 5 根键）不会静默出图，识别卡会直接给出「结构不合法」的原因。
 
 ### 2. Agent 工具
 
@@ -99,12 +128,14 @@ Python 3.12，不需要你本机装任何东西。
 ## 实现
 
 ```
-index.js     Host 半侧：3 个 HTTP 路由 + 3 个 agent 工具 + Python worker 管理
-client.js    浏览器半侧：右侧栏 tab（三种模式），只用 --dsw-alias-* 主题变量
+index.js     Host 半侧：4 个 HTTP 路由 + 3 个 agent 工具 + Python worker 管理
+client.js    浏览器半侧：右侧栏 tab（四种模式，含手绘画板），只用 --dsw-alias-* 主题变量
 worker.py    常驻渲染进程，一行请求一行响应，避免每条请求重新 import RDKit
 render.py    单分子渲染：布局、手性 H 修正、透明底、紧裁、固定键长
 scheme.py    反应式拼装（SVG 用 <g transform> 拼、PNG 用 PIL 拼）与批量导出
-runtime/     RDKit（cp312）
+identify.py  结构识别：molblock/SMILES → 规范 SMILES、分子式、分子量、InChI、IUPAC 名、常用名
+data/        常用名表（86 个化合物，InChIKey 索引）与生成脚本
+runtime/     RDKit（cp312）+ openclatura（离线 IUPAC 命名）
 scripts/     发布辅助：生成市场索引、替换仓库占位符
 market/      插件市场索引（Discover 用）
 ```
@@ -129,3 +160,5 @@ market/      插件市场索引（Discover 用）
 ## 许可
 
 MIT。`runtime/` 内是未修改的 RDKit wheel（BSD 3-Clause，见 `runtime/rdkit/license.txt`）。
+
+
