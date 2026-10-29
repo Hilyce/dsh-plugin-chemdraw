@@ -11,7 +11,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -66,8 +66,10 @@ class RenderWorker {
   start() {
     if (this.child) return this.child
     // -B: 不写 .pyc。插件装在哪就在哪编译，不该往安装目录里丢 __pycache__
+    // cwd 用系统临时目录：Windows 下进程的工作目录会锁住插件安装目录，
+    // pnpm 升级/卸载时就会 EPERM（无写入权限）。worker 自己用 __file__ 定位资源，不依赖 cwd。
     const child = spawn(this.python(), ['-B', join(HERE, 'worker.py')], {
-      cwd: HERE,
+      cwd: tmpdir(),
       windowsHide: true,
       env: {
         ...process.env,
@@ -163,11 +165,14 @@ class RenderWorker {
 
 function makeRenderer(config) {
   const worker = new RenderWorker(config)
-  return async function render(req) {
+  const render = async function render(req) {
     const res = await worker.request(req)
     if (!res || res.ok !== true) throw new Error((res && res.error) || '渲染失败')
     return res
   }
+  // 卸载/升级插件时要能拿到 worker，把它停掉，否则 Windows 会锁住安装目录
+  render.worker = worker
+  return render
 }
 
 /* ---------------------------------------------------------------- 响应工具 */
@@ -294,6 +299,12 @@ function makeRoutes(render) {
 export function apply(ctx, config = {}) {
   const render = makeRenderer(config || {})
   const routes = makeRoutes(render)
+
+  // 插件被停用/卸载时结束常驻 Python 进程：释放安装目录里的 .pyd/.dll 文件句柄，
+  // 否则 pnpm 无法替换 node_modules（Windows 上表现为 EPERM / 无写入权限）。
+  ctx.effect(() => () => {
+    try { render.worker.kill() } catch { /* 已退出 */ }
+  }, 'dsh-chemdraw: worker lifecycle')
 
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
