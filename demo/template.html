@@ -119,12 +119,23 @@
   .floaty{animation:floaty 7s ease-in-out infinite}
   @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
 
+  /* 面板截图外框 */
+  .shot{
+    border:1px solid var(--line);border-radius:16px;padding:10px;
+    background:linear-gradient(180deg,#12161f,#0c1017);
+    box-shadow:0 30px 70px rgba(0,0,0,.5);
+    max-width:420px;margin:0 auto;width:100%;
+  }
+  .shot img{width:100%;display:block;border-radius:10px}
+  .shot-cap{margin-top:10px;font-size:11.5px;color:var(--dim);font-family:var(--mono);text-align:center}
+
   /* ---------- sections ---------- */
   section{padding:76px 0;position:relative}
   .sec-head{max-width:640px;margin-bottom:36px}
   h2{font-size:clamp(24px,2.7vw,34px);letter-spacing:-.03em;margin:0 0 12px;font-weight:650}
   .sec-head p{color:var(--muted);margin:0;font-size:15.5px}
-  .split{display:grid;grid-template-columns:1.15fr .85fr;gap:40px;align-items:center}
+  .split > *{min-width:0}
+  .split{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:40px;align-items:center}
   .panel{
     background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.015));
     border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;
@@ -310,6 +321,7 @@
     </a>
     <nav class="nav-links">
       <a href="#demo">演示</a>
+      <a href="#draw">手绘</a>
       <a href="#reaction">反应式</a>
       <a href="#features">特性</a>
       <a href="#install">安装</a>
@@ -328,7 +340,7 @@
     <div>
       <span class="eyebrow"><span class="dot"></span>DeepSeek Harness · 化学结构式插件</span>
       <h1>把 SMILES 画成<br><em>能放进论文</em>的结构式</h1>
-      <p class="lede">透明底、紧裁边、键长统一、矢量 SVG。单分子、反应式、批量导出都在 DSH 侧栏里完成，自带离线 RDKit，本机不用装任何化学库。</p>
+      <p class="lede">透明底、紧裁边、键长统一、矢量 SVG。单分子、反应式、批量都在 DSH 侧栏里完成；没有 SMILES 时还能直接手绘，画完自动给出 IUPAC 名和常用名。自带离线 RDKit，本机不用装任何化学库。</p>
       <div class="hero-actions">
         <a class="btn btn-primary" href="#install">在 DSH 里安装</a>
         <a class="btn btn-ghost" href="#demo">看它怎么画 ↓</a>
@@ -336,6 +348,7 @@
       <div class="meta-row">
         <span><i></i>透明底 PNG / SVG</span>
         <span><i></i>键长精确统一</span>
+        <span><i></i>手绘 + IUPAC 命名</span>
         <span><i></i>RDKit 离线运行时</span>
       </div>
     </div>
@@ -399,6 +412,29 @@
         <div class="note"><span class="note-mark">02</span><div><h4>边是紧的</h4><p>按墨迹范围裁剪，四周只留几个像素，排版时不用手动描边。</p></div></div>
         <div class="note"><span class="note-mark">03</span><div><h4>尺度是准的</h4><p>同一个 <code style="font-family:var(--mono);font-size:12.5px;color:#9dc4ff">bond</code>，在任何画布尺寸下键长都一致。</p></div></div>
         <div class="note"><span class="note-mark">04</span><div><h4>立体化学画得对</h4><p>手性 H 会避开相邻键线，稠环、桥环上不再压线。</p></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- hand-drawing -->
+  <section id="draw">
+    <div class="sec-head reveal">
+      <span class="eyebrow" style="margin-bottom:14px">手绘 · 0.3</span>
+      <h2>没有 SMILES，也能画出来并命名</h2>
+      <p>点一个碳、拖出一条链、放一个苯环。画完自动识别成分子，给出 IUPAC 系统名和常用名，再用 RDKit 重排成和 SMILES 模式一样的图。</p>
+    </div>
+
+    <div class="split">
+      <div class="shot reveal">
+        <img src="assets/draw-panel.png" alt="手绘面板：对甲酚、IUPAC 名称与 RDKit 渲染" />
+        <div class="shot-cap">真实面板截图 · 对甲酚（p-cresol）· C₇H₈O</div>
+      </div>
+
+      <div class="notes reveal">
+        <div class="note"><span class="note-mark">1</span><div><h4>点碳，拖链</h4><p>「碳」+ 点空白 = 一个碳（孤立时显示 <code>CH₄</code>）；按住已有原子往空白拖，沿 30° 网格长出锯齿碳链，拖回原子上就闭环。</p></div></div>
+        <div class="note"><span class="note-mark">2</span><div><h4>模板拖进画板</h4><p>苯环、<code>N</code> <code>O</code> <code>S</code> <code>P</code> <code>F</code> <code>Cl</code> <code>Br</code> <code>I</code>、<code>OH</code>、<code>NH₂</code>、<code>CH₃</code>；拖到已有原子上就是换元素。</p></div></div>
+        <div class="note"><span class="note-mark">3</span><div><h4>自动命名</h4><p>IUPAC 系统名（离线规则引擎，如 <code>4-methylphenol</code>）+ 常用名（<code>对甲酚 · p-cresol</code>）+ 分子式/分子量/规范 SMILES。</p></div></div>
+        <div class="note"><span class="note-mark">4</span><div><h4>一键清空 / 重排</h4><p>画板右上角「清空」一键重来（可撤销）；点「重新渲染」用 RDKit 重排，导出的 PNG/SVG 和 SMILES 模式完全同款。</p></div></div>
       </div>
     </div>
   </section>
@@ -481,7 +517,7 @@
       <div class="card iface reveal">
         <h4>① 右侧栏面板</h4>
         <span class="chip">侧栏「+」→ 结构式</span>
-        <p>单分子 / 反应式 / 批量三种模式，预览、复制、下载都在面板里。</p>
+        <p>单分子 / 反应式 / 批量 / 手绘四种模式，预览、命名、复制、下载都在面板里。</p>
       </div>
       <div class="card iface reveal">
         <h4>② Agent 工具</h4>
@@ -533,12 +569,12 @@
       <div class="card install-card reveal">
         <h4 style="margin-top:0">在 DSH 里装（推荐）</h4>
         <p style="margin-bottom:12px">侧栏「插件」→「添加插件」→ 输入包名 → 安装 → 启用 → 重启 DSH。</p>
-        <pre>dsh-plugin-chemdraw@0.3.0<button class="copy" data-copy="dsh-plugin-chemdraw@0.3.0">复制</button></pre>
+        <pre>dsh-plugin-chemdraw@0.3.1<button class="copy" data-copy="dsh-plugin-chemdraw@0.3.1">复制</button></pre>
       </div>
       <div class="card install-card reveal">
         <h4 style="margin-top:0">从 npm 装</h4>
         <p style="margin-bottom:12px">或者用命令行，等价于界面里的操作。</p>
-        <pre>npm i dsh-plugin-chemdraw@0.3.0<button class="copy" data-copy="npm i dsh-plugin-chemdraw@0.3.0">复制</button></pre>
+        <pre>npm i dsh-plugin-chemdraw@0.3.1<button class="copy" data-copy="npm i dsh-plugin-chemdraw@0.3.1">复制</button></pre>
       </div>
     </div>
     <p style="color:var(--dim);font-size:13px;margin-top:14px">
@@ -773,3 +809,5 @@
 </script>
 </body>
 </html>
+
+
