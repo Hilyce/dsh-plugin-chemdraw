@@ -249,6 +249,17 @@
 
   /* install */
   .install-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .qr-card{
+    display:flex;gap:16px;align-items:center;margin-top:18px;padding:14px;
+    border:1px solid var(--line);border-radius:14px;
+    background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.012));
+  }
+  .qr-card img{width:118px;height:118px;flex:none;border-radius:8px;background:#fff;padding:5px}
+  .qr-card h4{margin:0 0 4px;font-size:15px}
+  .qr-card p{margin:0 0 8px;color:var(--muted);font-size:13px;line-height:1.55}
+  @media (max-width:560px){
+    .qr-card{flex-direction:column;align-items:flex-start}
+  }
   .install-card{position:relative}
   .copy{
     position:absolute;top:10px;right:10px;font-size:11.5px;padding:5px 9px;border-radius:7px;
@@ -580,6 +591,15 @@
     <p style="color:var(--dim);font-size:13px;margin-top:14px">
       装完要先卸载旧的 <code style="font-family:var(--mono)">dsh-chemdraw</code>，避免两个包抢同一个「结构式」面板；重启后侧栏「+」里出现入口。
     </p>
+
+    <div class="qr-card reveal">
+      <img src="assets/qr-demo.png" alt="演示页二维码" />
+      <div>
+        <h4>手机扫码看演示</h4>
+        <p>扫一下就能在手机浏览器里打开，和电脑上看到的是同一个单文件页面。</p>
+        <span class="chip">Hilyce.github.io/dsh-plugin-chemdraw/demo/</span>
+      </div>
+    </div>
   </section>
 
 </main>
