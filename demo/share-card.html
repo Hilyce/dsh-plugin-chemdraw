@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>share card</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    width:1080px;height:1360px;overflow:hidden;
+    font-family:ui-sans-serif,system-ui,"Segoe UI","Microsoft YaHei",sans-serif;
+    background:#0a0c11;color:#e9edf6;position:relative;
+  }
+  .bg{position:absolute;inset:0;
+    background:
+      radial-gradient(700px 420px at 12% 0%,rgba(91,157,255,.22),transparent 62%),
+      radial-gradient(600px 380px at 95% 8%,rgba(255,122,77,.14),transparent 60%),
+      radial-gradient(700px 500px at 50% 108%,rgba(91,157,255,.10),transparent 65%);
+  }
+  .grid{position:absolute;inset:0;opacity:.35;
+    background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
+    background-size:48px 48px;
+    mask-image:radial-gradient(720px 520px at 50% 0%,#000 10%,transparent 78%);
+    -webkit-mask-image:radial-gradient(720px 520px at 50% 0%,#000 10%,transparent 78%);
+  }
+  .wrap{position:relative;height:100%;padding:64px 72px 56px;display:flex;flex-direction:column}
+  .head{display:flex;align-items:center;gap:18px}
+  .logo{width:64px;height:64px;flex:none}
+  .brand{font-size:40px;font-weight:700;letter-spacing:-.02em}
+  .eyebrow{font-size:17px;letter-spacing:.18em;text-transform:uppercase;color:#8b93a7;margin-top:4px}
+  h1{font-size:52px;line-height:1.18;letter-spacing:-.03em;margin:40px 0 16px;font-weight:700}
+  h1 em{font-style:normal;background:linear-gradient(100deg,#8db9ff,#5b9dff 45%,#ff9a70);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{font-size:21px;line-height:1.6;color:#98a1b5;max-width:880px}
+  .chips{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}
+  .chip{font-size:15px;color:#9aa4b8;border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:6px 14px;background:rgba(255,255,255,.03);font-family:ui-monospace,Consolas,monospace}
+  .cards{margin-top:44px;display:flex;flex-direction:column;gap:20px}
+  .card{display:flex;align-items:center;gap:26px;padding:20px 24px;border-radius:20px;
+    border:1px solid rgba(255,255,255,.10);
+    background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.02));}
+  .qr{width:160px;height:160px;flex:none;border-radius:14px;background:#fff;padding:8px}
+  .qr img{width:100%;height:100%;display:block}
+  .meta{min-width:0}
+  .label{font-size:30px;font-weight:650;letter-spacing:-.01em;display:flex;align-items:center;gap:12px}
+  .tag{font-size:14px;font-weight:600;color:#5b9dff;border:1px solid rgba(91,157,255,.4);background:rgba(91,157,255,.12);border-radius:6px;padding:2px 8px;letter-spacing:.02em}
+  .url{margin-top:8px;font-family:ui-monospace,Consolas,monospace;font-size:18px;color:#9dc4ff;word-break:break-all}
+  .note{margin-top:6px;font-size:16px;color:#8b93a7}
+  .upd{margin-top:34px;font-size:18px;color:#8b93a7}
+  .upd b{color:#9dc4ff;font-family:ui-monospace,Consolas,monospace;margin-right:10px;font-weight:600}
+  .foot{margin-top:auto;padding-top:26px;border-top:1px solid rgba(255,255,255,.09);display:flex;justify-content:space-between;align-items:flex-end;gap:20px}
+  .install{font-size:17px;color:#c9d2e3;max-width:740px;line-height:1.6}
+  .install b{color:#fff;font-weight:650}
+  .install code{font-family:ui-monospace,Consolas,monospace;color:#9dc4ff}
+  .sign{font-size:14px;color:#6b7488;text-align:right;line-height:1.55;flex:none;width:250px}
+</style>
+</head>
+<body>
+<div class="bg"></div><div class="grid"></div>
+<div class="wrap">
+  <div class="head">
+    <svg class="logo" viewBox="0 0 64 64" fill="none" stroke="#5b9dff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 46 L26 38 L40 46"/><path d="M26 38 L26 22 L40 14"/><path d="M40 46 L40 30 L52 23"/>
+    </svg>
+    <div>
+      <div class="brand">dsh-plugin-chemdraw</div>
+      <div class="eyebrow">DeepSeek Harness · 化学结构式插件</div>
+    </div>
+  </div>
+
+  <h1>SMILES 画成<em>能放进论文</em>的结构式<br>也能手绘，并自动命名</h1>
+  <p class="sub">透明底、紧裁边、键长统一；单分子 / 反应式 / 批量 / 手绘四种模式，画完给出 IUPAC 系统名和常用名。自带离线 RDKit，本机不用装化学库。</p>
+  <div class="chips">
+    <span class="chip">v0.3.1</span><span class="chip">MIT</span><span class="chip">离线 RDKit</span><span class="chip">93 个常用名</span>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="qr"><img src="assets/qr-demo.png" alt="演示页"></div>
+      <div class="meta">
+        <div class="label">演示页 <span class="tag">手机扫码看</span></div>
+        <div class="url">Hilyce.github.io/dsh-plugin-chemdraw/demo/</div>
+        <div class="note">结构式描边动画、手绘面板、反应式排版，全在浏览器里直接看。</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="qr"><img src="assets/qr-npm.png" alt="npm"></div>
+      <div class="meta">
+        <div class="label">npm 安装 <span class="tag">命令</span></div>
+        <div class="url">npm i dsh-plugin-chemdraw@0.3.1</div>
+        <div class="note">也可以直接在 DSH 插件页输入包名安装。</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="qr"><img src="assets/qr-github.png" alt="GitHub"></div>
+      <div class="meta">
+        <div class="label">GitHub <span class="tag">源码</span></div>
+        <div class="url">github.com/Hilyce/dsh-plugin-chemdraw</div>
+        <div class="note">源码、Release、更新日志与问题反馈。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="upd"><b>0.3.1 新增</b>手绘键线式 · IUPAC + 常用名 · 一键清空 · 甲烷/单原子显示修复</div>
+
+  <div class="foot">
+    <div class="install">装到 DSH：插件 → 添加插件 → <code>dsh-plugin-chemdraw@0.3.1</code> → 启用 → 重启</div>
+    <div class="sign">MIT · 自带 RDKit（BSD 3-Clause）<br>2026 · Hilyce</div>
+  </div>
+</div>
+</body>
+</html>
